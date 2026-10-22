@@ -56,7 +56,8 @@ export class VRHud {
     if (!R) return;
     if (!(p > 0) || !this.group.visible) { R.mesh.visible = false; R.key = ''; return; }
     R.mesh.visible = true;
-    const step = Math.min(40, Math.round(p * 40));
+    const DOTS = 12;
+    const step = Math.min(DOTS * 4, Math.round(p * DOTS * 4)); // quarter-dot steps
     const key = String(step);
     if (key === R.key) return;
     R.key = key;
@@ -64,21 +65,29 @@ export class VRHud {
     const m = c.width / 2;
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.fillStyle = 'rgba(16,10,8,0.72)';
-    ctx.beginPath(); ctx.arc(m, m, 118, 0, Math.PI * 2); ctx.fill();
-    ctx.lineWidth = 14; ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(246,230,200,0.18)';
-    ctx.beginPath(); ctx.arc(m, m, 100, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = '#7cf0be';
-    ctx.beginPath(); ctx.arc(m, m, 100, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (step / 40)); ctx.stroke();
+    ctx.beginPath(); ctx.arc(m, m, 122, 0, Math.PI * 2); ctx.fill();
+    const filled = step / 4;
+    for (let i = 0; i < DOTS; i++) {
+      const a = -Math.PI / 2 + (i / DOTS) * Math.PI * 2;
+      const x = m + Math.cos(a) * 96, y = m + Math.sin(a) * 96;
+      const f = Math.max(0, Math.min(1, filled - i)); // 0 empty .. 1 full
+      ctx.fillStyle = 'rgba(246,230,200,0.2)';
+      ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2); ctx.fill();
+      if (f > 0) {
+        ctx.fillStyle = '#7cf0be';
+        ctx.beginPath(); ctx.arc(x, y, 4 + 9 * f, 0, Math.PI * 2); ctx.fill();
+      }
+    }
     ctx.fillStyle = '#f6e6c8';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `700 34px ${UI}`;
+    ctx.font = `700 32px ${UI}`;
     ctx.fillText('RECENTER', m, m - 14);
-    ctx.font = `600 24px ${UI}`;
+    ctx.font = `600 22px ${UI}`;
     ctx.fillStyle = 'rgba(246,230,200,0.75)';
-    ctx.fillText('keep looking down', m, m + 22);
+    ctx.fillText('keep looking up', m, m + 20);
     R.tex.needsUpdate = true;
   }
+
 
   setStats(score, coins, mult, flash) {
     const key = `${score}|${coins}|${mult}|${flash || ''}`;

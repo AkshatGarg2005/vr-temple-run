@@ -35,7 +35,7 @@ In Phone VR, the phone's accelerometer detects real jumps and crouches:
 
 **Recenter view** (Phone VR): if "straight ahead" drifts, recenter in any of these ways:
 
-- **Hands-free:** face the way you want to go and look down at your feet for about 2 seconds. A ring in the middle of the view fills up, then the view recenters.
+- **Hands-free:** wherever you're facing, look up and hold it for 2 seconds. A circle of dots fills in the middle of the view, and the direction you're facing becomes the running direction. Looking back down early cancels it.
 - **Headset button:** press and hold it (a long press on the screen).
 - **On-screen button:** tap the ⟲ button next to the pause button.
 - **Pause menu:** choose **Recenter view**.

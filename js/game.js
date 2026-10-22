@@ -21,6 +21,17 @@ const buzz = (pattern) => {
   if (!navigator.vibrate || (navigator.userActivation && !navigator.userActivation.hasBeenActive)) return;
   try { navigator.vibrate(pattern); } catch { /* unsupported */ }
 };
+// Which way the player's body faces (yaw), even while looking straight up or
+// down: the gaze direction stops pointing anywhere horizontal near the
+// vertical, but the top of the head then tilts away from the facing
+// direction, so we blend the two.
+const _fw = new THREE.Vector3(), _up = new THREE.Vector3();
+function facingYaw(q) {
+  _fw.set(0, 0, -1).applyQuaternion(q);
+  _up.set(0, 1, 0).applyQuaternion(q);
+  const x = _fw.x - _up.x * _fw.y, z = _fw.z - _up.z * _fw.y;
+  return Math.atan2(-x, -z);
+}
 const nearestLane = (x) => { let b = 0; for (let i = 1; i < 3; i++) if (Math.abs(LANES[i] - x) < Math.abs(LANES[b] - x)) b = i; return b; };
 
 export class Game {
@@ -80,7 +91,7 @@ export class Game {
     scene.add(this.birds.mesh);
     this.vrHud = new VRHud(this.rig);
     this.vrHud.attachHeadLocked(this.camera);
-    this.lookDownT = 0;
+    this.lookUpT = 0;
 
     this.camPos = new THREE.Vector3(6, 3, -8);
     this.camLook = new THREE.Vector3();
@@ -179,14 +190,11 @@ export class Game {
 
   // Make the direction the player is facing "straight ahead" (VR only).
   recenter(silent = false) {
-    if (this.mode === 'cardboard') {
-      _e.setFromQuaternion(this.input.deviceQuat, 'YXZ');
-    } else if (this.mode === 'xr') {
-      _e.setFromQuaternion(this.camera.quaternion, 'YXZ');
-    } else {
-      return;
-    }
-    this.calibYaw = _e.y;
+    let q;
+    if (this.mode === 'cardboard') q = this.input.deviceQuat;
+    else if (this.mode === 'xr') q = this.camera.quaternion;
+    else return;
+    this.calibYaw = facingYaw(q);
     this.calibQ.setFromAxisAngle(UP, this.calibYaw);
     if (!silent) {
       this.ui.toast('View recentered');
@@ -194,6 +202,7 @@ export class Game {
       buzz(30);
     }
   }
+
 
   // ------------------------------------------------------------------ input
   handleActions() {
@@ -283,7 +292,7 @@ export class Game {
     _e.setFromQuaternion(q, 'YXZ');
     const H = this.head;
     H.pitch = _e.x; H.yaw = wrapAngle(_e.y); H.roll = _e.z;
-    this.lookDownRecenter(dt);
+    this.lookUpRecenter(dt);
     if (this.state !== 'run') return;
     if (Math.abs(H.yaw) < 0.6 && Math.abs(H.pitch) < 0.75) {
       const r = -H.roll; // + = tilted right
@@ -300,24 +309,27 @@ export class Game {
     }
   }
 
-  // Hands-free recenter: face the way you want to go and look down at your
-  // feet (~65 deg or more) for 1.6 s. A ring in the middle of the view fills
-  // up; looking back up cancels. Lane steering is ignored while looking down.
-  lookDownRecenter(dt) {
+  // Hands-free recenter: wherever you're facing, look up (about 55 deg or
+  // more) and hold for 2 s. A circle of dots fills in the middle of the view;
+  // looking back down early cancels. The way your body faces becomes the
+  // running direction. Lane steering is ignored while looking up.
+  lookUpRecenter(dt) {
     const active = this.state === 'run' || this.state === 'countdown' || this.state === 'over' || this.state === 'calibrate';
     const H = this.head;
-    if (!active) { this.lookDownT = 0; this.vrHud.recenterProgress(0); return; }
-    if (H.pitch < -1.13) {
-      if (this.lookDownT >= 0) {
-        this.lookDownT += dt;
-        if (this.lookDownT >= 1.6) { this.recenter(); this.lookDownT = -1; }
+    const HOLD = 2.0;
+    if (!active) { this.lookUpT = 0; this.vrHud.recenterProgress(0); return; }
+    if (H.pitch > 0.95) {
+      if (this.lookUpT >= 0) {
+        this.lookUpT += dt;
+        if (this.lookUpT >= HOLD) { this.recenter(); this.lookUpT = -1; }
       }
-    } else if (H.pitch > -0.95) {
-      this.lookDownT = 0; // re-arm once the player looks back up
+    } else if (H.pitch < (this.lookUpT < 0 ? 0.6 : 0.8)) {
+      this.lookUpT = 0; // cancel, or re-arm once the player looks back down
     }
-    const p = this.lookDownT > 0.25 ? this.lookDownT / 1.6 : 0;
+    const p = this.lookUpT > 0.2 ? this.lookUpT / HOLD : 0;
     this.vrHud.recenterProgress(p);
   }
+
 
   // WebXR headsets with positional tracking (e.g. Quest): read real jumps and
   // crouches straight from head height.
