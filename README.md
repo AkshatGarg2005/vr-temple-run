@@ -52,6 +52,10 @@ After a run ends in Phone VR, jump to start again.
 
 Turn at every junction or you hit the temple wall. Jump over roots and gaps, slide under fallen logs and fire traps, and steer around stone blocks. Clipping a root or the edge of a block makes you stumble and brings the guardians close behind you. Stumble again within 7 seconds and they catch you. Coins add to your score, the multiplier goes up every 750 m, and the red magnet pulls in nearby coins.
 
+## Graphics
+
+The game always runs at its highest quality: sun shafts, lens flare, bloom, film-style colour grading, soft shadows, flickering firelight, high-resolution stone with ambient occlusion and roughness maps, swaying vines and ferns, waterfalls, bird flocks, and a sky with a moon and stars. To keep the frame rate smooth, the rendering resolution adjusts itself automatically, and on very slow devices the sun shafts switch off. In a WebXR headset, post-processing is skipped because the browser draws straight to the headset.
+
 ## Files
 
 - `app.js`: startup, menus, VR session handling, main loop

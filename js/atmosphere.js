@@ -66,10 +66,34 @@ export function createSky(cloudTex) {
       uniform sampler2D uClouds;
       varying vec3 vDir;
       ${SKY_GLSL}
+      float rrHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      const vec3 RR_MOON = vec3(0.5, 0.42, 0.757);
       void main() {
         vec3 dir = normalize(vDir);
         vec3 col = rrSky(dir);
         float sd = max(dot(dir, RR_SUN), 0.0);
+        // stars, only where the sky has darkened enough
+        if (dir.y > 0.1) {
+          float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
+          float mask = 1.0 - smoothstep(0.03, 0.2, lum);
+          vec2 sp = vec2(atan(dir.z, dir.x), asin(clamp(dir.y, -1.0, 1.0))) * 110.0;
+          vec2 cell = floor(sp);
+          float h = rrHash(cell);
+          if (h > 0.972 && mask > 0.0) {
+            vec2 o = vec2(rrHash(cell + 3.1), rrHash(cell + 7.7)) - 0.5;
+            float st = smoothstep(0.2, 0.0, length(fract(sp) - 0.5 - o * 0.6));
+            float tw = 0.6 + 0.4 * sin(uTime * (1.3 + h * 4.0) + h * 90.0);
+            col += vec3(1.3, 1.35, 1.5) * st * tw * mask * (0.6 + (h - 0.972) * 25.0);
+          }
+        }
+        // moon, rising opposite the sun
+        float md = dot(dir, normalize(RR_MOON));
+        if (md > 0.99) {
+          float n = texture2D(uClouds, dir.xz * 9.0).r;
+          float disc = smoothstep(0.99958, 0.99974, md);
+          col = mix(col, vec3(2.0, 2.05, 2.2) * (0.72 + 0.35 * n), disc);
+        }
+        col += vec3(0.32, 0.4, 0.6) * (pow(max(md, 0.0), 900.0) * 0.6 + pow(max(md, 0.0), 60.0) * 0.06);
         // clouds projected onto a high plane
         if (dir.y > 0.0) {
           vec2 uv = dir.xz / (dir.y + 0.08) * 0.11 + vec2(uTime * 0.0035, uTime * 0.001);
@@ -326,4 +350,62 @@ export function buildEnvironment(renderer, cloudTex) {
   sky.geometry.dispose();
   sky.material.dispose();
   return rt.texture;
+}
+
+// ---------------------------------------------------------------------------
+// Distant bird flocks circling over the canyon. Wings flap in the vertex shader.
+export function createBirds(count = 30) {
+  const P = [], W = [];
+  const tri = (a, b, c, wa, wb, wc) => { P.push(...a, ...b, ...c); W.push(wa, wb, wc); };
+  tri([0, 0, -0.55], [0.09, 0, 0.45], [-0.09, 0, 0.45], 0, 0, 0);            // body
+  tri([0, 0, -0.2], [0, 0, 0.25], [-1.15, 0.05, 0.12], 0, 0, 1);             // left wing
+  tri([0, 0, -0.2], [1.15, 0.05, 0.12], [0, 0, 0.25], 0, 1, 0);              // right wing
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  g.setAttribute('aWing', new THREE.Float32BufferAttribute(W, 1));
+  const uniforms = { uTime: { value: 0 } };
+  const mat = new THREE.MeshBasicMaterial({ color: 0x2a2024, side: THREE.DoubleSide });
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = uniforms.uTime;
+    shader.vertexShader = 'attribute float aWing;\nuniform float uTime;\n' + shader.vertexShader.replace('#include <begin_vertex>', /* glsl */`
+      #include <begin_vertex>
+      float rrPh = (instanceMatrix[3].x * 0.37 + instanceMatrix[3].z * 0.23);
+      transformed.y += sin(uTime * 8.5 + rrPh) * aWing * 0.6;
+    `);
+  };
+  const mesh = new THREE.InstancedMesh(g, mat, count);
+  mesh.frustumCulled = false;
+  const flocks = [];
+  const per = Math.ceil(count / 3);
+  for (let f = 0; f < 3; f++) {
+    flocks.push({
+      a0: Math.random() * Math.PI * 2, r: 75 + f * 30 + Math.random() * 20, h: 14 + f * 9 + Math.random() * 8,
+      w: (0.05 + Math.random() * 0.04) * (f % 2 ? -1 : 1),
+      birds: Array.from({ length: per }, (_, i) => {
+        const row = Math.floor((i + 1) / 2), side = i % 2 ? 1 : -1;
+        return { x: side * row * 2.2, z: row * 2.0, y: (Math.random() - 0.5) * 1.2, s: 1.5 + Math.random() * 0.6, ph: Math.random() * 6 };
+      }),
+    });
+  }
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+  function update(t, center) {
+    uniforms.uTime.value = t;
+    let k = 0;
+    for (const F of flocks) {
+      const a = F.a0 + F.w * t;
+      const cx = center.x + Math.cos(a) * F.r, cz = center.z + Math.sin(a) * F.r;
+      // face along the circle (model nose points to -z, so yaw = atan2(-vx, -vz))
+      const sg = Math.sign(F.w);
+      q.setFromAxisAngle(up, Math.atan2(sg * Math.sin(a), -sg * Math.cos(a)));
+      for (const B of F.birds) {
+        if (k >= count) break;
+        p.set(B.x, B.y + Math.sin(t * 0.8 + B.ph) * 0.6, B.z).applyQuaternion(q);
+        p.x += cx; p.z += cz; p.y += F.h;
+        sc.setScalar(B.s);
+        mesh.setMatrixAt(k++, m.compose(p, q, sc));
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+  return { mesh, update };
 }

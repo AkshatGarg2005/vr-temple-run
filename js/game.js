@@ -5,7 +5,7 @@ import {
   PATH_W, HALF_W, LANES, X_LIMIT, GRAVITY, JUMP_V, SLIDE_TIME, START_SPEED, MAX_SPEED, RUNNER_H, SLIDE_H,
   SUN_DIR, PALETTE, clamp, damp, wrapAngle,
 } from './config.js';
-import { patchFog, createSky, createMountains, createCloudSea, createCanopy, buildEnvironment } from './atmosphere.js';
+import { patchFog, createSky, createMountains, createCloudSea, createCanopy, buildEnvironment, createBirds } from './atmosphere.js';
 import { cloudNoiseTexture } from './textures.js';
 import { createMaterials } from './builders.js';
 import { World } from './world.js';
@@ -66,16 +66,18 @@ export class Game {
     scene.add(this.sun, this.sun.target);
     this.hemi = new THREE.HemisphereLight(PALETTE.hemiSky, PALETTE.hemiGround, 0.55);
     scene.add(this.hemi);
-    this.setShadowSize(settings.high ? (mobile ? 1024 : 2048) : 1024);
+    this.setShadowSize(mobile ? 2048 : 4096);
 
     this.M = createMaterials(renderer.capabilities.getMaxAnisotropy());
-    this.world = new World(scene, this.M, { lights: mobile ? 2 : 3 });
+    this.world = new World(scene, this.M, { lights: mobile ? 3 : 4, noiseTex: cloudTex });
     this.runner = new Runner(this.M.gold);
     scene.add(this.runner.root);
     this.chasers = new Chasers(scene);
     this.glow = new Particles(scene, this.M.glow, 700, true);
     this.dust = new Particles(scene, this.M.glow, 260, false);
-    this.motes = createMotes(scene, this.M.glow, mobile ? 260 : 420);
+    this.motes = createMotes(scene, this.M.glow, mobile ? 320 : 520);
+    this.birds = createBirds(30);
+    scene.add(this.birds.mesh);
     this.vrHud = new VRHud(this.rig);
     this.vrHud.attachHeadLocked(this.camera);
     this.lookDownT = 0;
@@ -885,6 +887,7 @@ export class Game {
     this.canopy.userData.wrap.uWrapCenter.value.set(cam.x, cam.z);
     this.motes.uniforms.uTime.value = t;
     this.motes.uniforms.uCenter.value.copy(cam);
+    this.birds.update(t, this.P.pos);
     // sun + shadow frustum follow the runner (snapped to texels to avoid shimmer)
     const P = this.P;
     const texel = 48 / this.sun.shadow.mapSize.x;
@@ -892,6 +895,12 @@ export class Game {
     this.sun.target.position.set(cx, 0, cz);
     this.sun.position.set(cx + SUN_DIR.x * 80, SUN_DIR.y * 80 + 20, cz + SUN_DIR.z * 80);
     this.sun.target.updateMatrixWorld();
+  }
+
+  // 0..1 strength of the edge speed blur (normal screen, while running fast)
+  speedFx() {
+    if (this.state !== 'run' || this.isVR()) return 0;
+    return clamp((this.P.speed - 16) / (MAX_SPEED - 16), 0, 1) * 0.9;
   }
 
   setParticleScale(heightPx) {

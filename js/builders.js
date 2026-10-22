@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PATH_W, HALF_W, TILE, SLAB_DEPTH, CURB_H, CURB_W, rng } from './config.js';
 import * as TX from './textures.js';
-import { treeGeometry, paint, mergeNonIndexed } from './atmosphere.js';
+import { treeGeometry, paint, mergeNonIndexed, SKY_GLSL } from './atmosphere.js';
 
 // Box with UVs in world units (one texture repeat per `unit` metres).
 export function box(w, h, d, x = 0, y = 0, z = 0, unit = 4, off = 0) {
@@ -20,8 +20,31 @@ export function box(w, h, d, x = 0, y = 0, z = 0, unit = 4, off = 0) {
   return g;
 }
 
+// Wind sway for foliage: bends vertices by their height above (ferns) or
+// below (hanging vines) the attachment point. Shared time uniform.
+export const FX_TIME = { value: 0 };
+function addSway(mat, amp, hanging) {
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = FX_TIME;
+    shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader.replace('#include <begin_vertex>', /* glsl */`
+      #include <begin_vertex>
+      #ifdef USE_INSTANCING
+        vec3 rrIP = instanceMatrix[3].xyz;
+      #else
+        vec3 rrIP = vec3(0.0);
+      #endif
+      float rrK = ${hanging ? '-min(position.y, 0.0) * 0.35' : 'max(position.y, 0.0)'};
+      float rrSw = (sin(uTime * 1.6 + rrIP.x * 0.31 + rrIP.z * 0.23) + 0.4 * sin(uTime * 3.7 + rrIP.z * 0.7)) * ${amp.toFixed(3)} * rrK;
+      transformed.x += rrSw;
+      transformed.z += rrSw * 0.6;
+    `);
+  };
+  mat.customProgramCacheKey = () => 'sway' + amp + hanging;
+  return mat;
+}
+
 export function createMaterials(maxAniso) {
-  TX.setAnisotropy(Math.min(8, maxAniso));
+  TX.setAnisotropy(Math.min(16, maxAniso));
   const path = TX.pathTextures();
   const wall = TX.wallTextures();
   const junc = TX.junctionTextures();
@@ -29,26 +52,33 @@ export function createMaterials(maxAniso) {
   const bark = TX.barkTextures();
   const flame = TX.flameTexture();
   const glow = TX.glowTexture();
+  const vineTex = TX.vineTexture();
+  const fernTex = TX.fernTexture();
 
   const M = {
-    path: new THREE.MeshStandardMaterial({ map: path.map, normalMap: path.normalMap, normalScale: new THREE.Vector2(1.1, 1.1), roughness: 0.88, metalness: 0 }),
-    stone: new THREE.MeshStandardMaterial({ map: wall.map, normalMap: wall.normalMap, roughness: 0.92, metalness: 0 }),
-    stoneDark: new THREE.MeshStandardMaterial({ map: wall.map, normalMap: wall.normalMap, color: 0x8a7f78, roughness: 0.95 }),
+    path: new THREE.MeshStandardMaterial({
+      map: path.map, normalMap: path.normalMap, normalScale: new THREE.Vector2(1.15, 1.15),
+      aoMap: path.ormMap, aoMapIntensity: 1, roughnessMap: path.ormMap, roughness: 1, metalness: 0,
+    }),
+    stone: new THREE.MeshStandardMaterial({ map: wall.map, normalMap: wall.normalMap, aoMap: wall.ormMap, roughnessMap: wall.ormMap, roughness: 1, metalness: 0 }),
+    stoneDark: new THREE.MeshStandardMaterial({ map: wall.map, normalMap: wall.normalMap, aoMap: wall.ormMap, roughnessMap: wall.ormMap, color: 0x8a7f78, roughness: 1 }),
     junction: new THREE.MeshStandardMaterial({
-      map: junc.map, normalMap: junc.normalMap, roughnessMap: junc.ormMap, metalnessMap: junc.ormMap,
-      emissiveMap: junc.emissiveMap, emissive: 0xffa040, emissiveIntensity: 0.6, roughness: 1, metalness: 1,
+      map: junc.map, normalMap: junc.normalMap, aoMap: junc.ormMap, roughnessMap: junc.ormMap, metalnessMap: junc.ormMap,
+      emissiveMap: junc.emissiveMap, emissive: 0xffa040, emissiveIntensity: 0.7, roughness: 1, metalness: 1,
     }),
     relief: new THREE.MeshStandardMaterial({
-      map: relief.map, normalMap: relief.normalMap, emissiveMap: relief.emissiveMap,
-      emissive: 0xff8a2a, emissiveIntensity: 3.2, roughness: 0.9,
+      map: relief.map, normalMap: relief.normalMap, emissiveMap: relief.emissiveMap, aoMap: relief.ormMap, roughnessMap: relief.ormMap,
+      emissive: 0xff8a2a, emissiveIntensity: 3.4, roughness: 1,
     }),
     bark: new THREE.MeshStandardMaterial({ map: bark.map, normalMap: bark.normalMap, roughness: 0.95 }),
-    gold: new THREE.MeshStandardMaterial({ color: 0xffc23d, metalness: 1, roughness: 0.2, emissive: 0x8a4a00, emissiveIntensity: 0.45 }),
+    gold: new THREE.MeshStandardMaterial({ color: 0xffc23d, metalness: 1, roughness: 0.18, emissive: 0x8a4a00, emissiveIntensity: 0.45, envMapIntensity: 1.4 }),
     brazier: new THREE.MeshStandardMaterial({ color: 0x3b2a1e, metalness: 0.6, roughness: 0.45 }),
     ember: new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 1.4, 0.35) }),
     vine: new THREE.MeshStandardMaterial({ color: 0x3d6b2a, roughness: 0.8, side: THREE.DoubleSide }),
     rock: new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 }),
     flame: new THREE.SpriteMaterial({ map: flame, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, color: new THREE.Color(2.2, 1.6, 1.2) }),
+    vineCurtain: addSway(new THREE.MeshStandardMaterial({ map: vineTex, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.75 }), 0.05, true),
+    fern: addSway(new THREE.MeshStandardMaterial({ map: fernTex, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.7 }), 0.09, false),
     glow, flameTex: flame,
   };
   return M;
@@ -425,5 +455,104 @@ export function idolGeometry() {
   ];
   const g = mergeNonIndexed(parts);
   g.computeVertexNormals();
+  return g;
+}
+
+// ---------------------------------------------------------------------------
+// Foliage geometry
+export function vineCurtainGeometry() {
+  // two hanging sheets, top edge at y = 0, facing +x (outwards from the bridge)
+  const a = new THREE.PlaneGeometry(TILE * 0.95, 3.4).translate(0, -1.7, 0);
+  const b = new THREE.PlaneGeometry(TILE * 0.6, 2.4).translate(0.8, -1.2, 0.12);
+  const g = mergeGeometries([a, b]);
+  g.rotateY(Math.PI / 2);
+  return g;
+}
+
+export function fernGeometry() {
+  const a = new THREE.PlaneGeometry(1.0, 0.8).translate(0, 0.4, 0);
+  const b = a.clone().rotateY(Math.PI / 2);
+  const c = a.clone().rotateY(Math.PI / 4).scale(0.8, 0.85, 0.8);
+  return mergeGeometries([a, b, c]);
+}
+
+// ---------------------------------------------------------------------------
+// Waterfall: an animated sheet of water falling from a spire into the clouds.
+export function waterfallMaterial(noiseTex) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uTime: FX_TIME, uNoise: { value: noiseTex } },
+    vertexShader: /* glsl */`
+      varying vec2 vUv; varying vec3 vWorld;
+      void main() {
+        vUv = uv;
+        vec3 p = position;
+        p.z += (1.0 - uv.y) * (1.0 - uv.y) * 6.0; // the water arcs away from the cliff as it falls
+        vec4 wp = modelMatrix * vec4(p, 1.0);
+        vWorld = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uTime; uniform sampler2D uNoise;
+      varying vec2 vUv; varying vec3 vWorld;
+      ${SKY_GLSL}
+      void main() {
+        float y = 1.0 - vUv.y;                 // 0 at the lip, 1 at the bottom
+        // long vertical ribbons of water sliding down at different speeds
+        vec2 uv1 = vec2(vUv.x * 3.5, y * 1.2 - uTime * 0.85);
+        vec2 uv2 = vec2(vUv.x * 7.0 + 0.37, y * 2.6 - uTime * 1.5);
+        vec2 uv3 = vec2(vUv.x * 1.6 + 0.71, y * 0.6 - uTime * 0.5);
+        float n = texture2D(uNoise, uv1).r * 0.5 + texture2D(uNoise, uv2).r * 0.3 + texture2D(uNoise, uv3).r * 0.2;
+        float streak = smoothstep(0.3, 0.8, n);
+        float edge = smoothstep(0.0, 0.25, vUv.x) * smoothstep(1.0, 0.75, vUv.x);
+        float a = (0.12 + 0.88 * streak) * edge * smoothstep(0.0, 0.02, y) * (1.0 - smoothstep(0.5, 1.0, y));
+        a *= 0.85;
+        vec3 dir = normalize(vWorld - cameraPosition);
+        float sd = max(dot(dir, RR_SUN), 0.0);
+        vec3 col = mix(vec3(0.42, 0.55, 0.62), vec3(1.3, 1.28, 1.2), streak);
+        col += vec3(1.0, 0.6, 0.3) * pow(sd, 8.0) * 0.6;
+        col = mix(col, vec3(1.4), smoothstep(0.08, 0.0, y) * 0.6); // white foam at the lip
+        float dist = length(vWorld - cameraPosition);
+        float fog = 1.0 - exp(-pow(dist * 0.0068, 2.0));
+        col = mix(col, rrSky(dir), fog);
+        gl_FragColor = vec4(col, a * (1.0 - fog * 0.6));
+      }`,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    fog: false,
+  });
+}
+
+export function makeWaterfall(mat, glowTex) {
+  const g = new THREE.Group();
+  const sheet = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 64, 1, 24).translate(0, -32, 0.8), mat);
+  sheet.renderOrder = 2;
+  sheet.frustumCulled = false;
+  const spray = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: new THREE.Color(0.9, 0.95, 1.0), transparent: true, opacity: 0.55, depthWrite: false }));
+  spray.scale.set(16, 9, 1);
+  g.add(sheet, spray);
+  g.userData.spray = spray;
+  return g;
+}
+
+// Small stepped temple to crown some spires, with a glowing doorway.
+export function shrineGeometry() {
+  const stone = new THREE.Color('#9a8a76'), dark = new THREE.Color('#5d5146'), moss = new THREE.Color('#5d7a3a');
+  const b = (w, h, d, x, y, z, c) => paint(new THREE.BoxGeometry(w, h, d).toNonIndexed().translate(x, y, z), c);
+  const parts = [];
+  const tiers = [[12, 2.2], [9.4, 2.0], [7, 1.9], [4.8, 1.8]];
+  let y = 0;
+  tiers.forEach(([w, h], i) => {
+    parts.push(b(w, h, w, 0, y + h / 2, 0, i % 2 ? stone : dark));
+    parts.push(b(w + 0.4, 0.25, w + 0.4, 0, y + h, 0, i === 0 ? moss : stone));
+    y += h;
+  });
+  parts.push(b(3.2, 2.6, 3.2, 0, y + 1.3, 0, stone));
+  parts.push(b(3.8, 0.4, 3.8, 0, y + 2.8, 0, dark));
+  // stairway on the front
+  for (let i = 0; i < 8; i++) parts.push(b(2.4, 0.4, 1.0, 0, 0.2 + i * 0.95, 6 - i * 0.62, stone));
+  const g = mergeNonIndexed(parts);
+  g.computeVertexNormals();
+  g.userData = { top: y, doorY: y + 1.0 };
   return g;
 }

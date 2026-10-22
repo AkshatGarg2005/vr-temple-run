@@ -60,7 +60,7 @@ function boxBlur(src, w, h, r, wrap) {
 }
 
 function readGray(c) {
-  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  const d = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height).data;
   const out = new Float32Array(c.width * c.height);
   for (let i = 0; i < out.length; i++) out[i] = d[i * 4] / 255;
   return out;
@@ -68,7 +68,7 @@ function readGray(c) {
 
 function normalFromHeight(hgt, w, h, strength, wrap) {
   const c = canvas(w, h);
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   const img = ctx.createImageData(w, h);
   const d = img.data;
   const at = (x, y) => {
@@ -145,11 +145,12 @@ function crack(ctxs, r, x, y, len, w) {
 // Shared per-pixel finishing: grain, mottling, moss in the low spots.
 function finishStone(colorCanvas, hgt, w, h, seed, opts = {}) {
   const { moss = 0.5, grain = 0.18, wrap = true, period = 8 } = opts;
-  const ctx = colorCanvas.getContext('2d');
+  const ctx = colorCanvas.getContext('2d', { willReadFrequently: true });
   const img = ctx.getImageData(0, 0, w, h);
   const d = img.data;
   const n1 = makeNoise(seed, period), n2 = makeNoise(seed + 7, period * 4);
   const mossR = 0.27, mossG = 0.36, mossB = 0.14;
+  const mossA = new Float32Array(w * h), fineA = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
@@ -162,6 +163,7 @@ function finishStone(colorCanvas, hgt, w, h, seed, opts = {}) {
       shade *= 1 - low * 0.45;
       let m = clamp((big - 0.52) * 4.5, 0, 1) * moss + low * moss * 0.9 * clamp(big * 1.6 - 0.3, 0, 1);
       m = clamp(m, 0, 0.85);
+      mossA[i] = m; fineA[i] = fine;
       const k = i * 4;
       const r0 = d[k] / 255 * shade, g0 = d[k + 1] / 255 * shade, b0 = d[k + 2] / 255 * shade;
       const ms = 0.75 + fine * 0.5;
@@ -170,29 +172,51 @@ function finishStone(colorCanvas, hgt, w, h, seed, opts = {}) {
       d[k + 2] = clamp(b0 + (mossB * ms - b0) * m, 0, 1) * 255;
     }
   }
+  // Ambient occlusion from cavities (height vs. its blurred surroundings) and
+  // a roughness map: worn stone tops are smoother, grout and moss are matte.
+  const blur = Float32Array.from(hgt);
+  const br = Math.max(2, Math.round(w / 96));
+  boxBlur(blur, w, h, br, wrap);
+  boxBlur(blur, w, h, br, wrap);
+  const ao = new Float32Array(w * h);
+  const orm = canvas(w, h);
+  const octx = orm.getContext('2d', { willReadFrequently: true });
+  const oimg = octx.createImageData(w, h);
+  const od = oimg.data;
+  for (let i = 0; i < w * h; i++) {
+    const a = clamp(1 - Math.max(0, blur[i] - hgt[i]) * 4.5, 0.28, 1);
+    ao[i] = a;
+    const rough = clamp(0.5 + (1 - hgt[i]) * 0.42 + mossA[i] * 0.3 + (fineA[i] - 0.5) * 0.16, 0.32, 1);
+    const k = i * 4;
+    const darken = 1 - (1 - a) * 0.35; // a little cavity shade in the colour too, for direct light
+    d[k] *= darken; d[k + 1] *= darken; d[k + 2] *= darken;
+    od[k] = a * 255; od[k + 1] = rough * 255; od[k + 2] = 0; od[k + 3] = 255;
+  }
   ctx.putImageData(img, 0, 0);
-  void wrap;
+  octx.putImageData(oimg, 0, 0);
+  return { orm, ao };
 }
 
 // ---------------------------------------------------------------------------
 // Bridge path: flagstones laid in courses, 4.6 m x 6 m per slab.
 export function pathTextures(seed = 11) {
-  const W = 512, H = 668;
+  const K = 2; // 2x resolution: 1024 x 1336 for a 4.6 m x 6 m slab
+  const W = 512 * K, H = 668 * K;
   const r = rng(seed);
   const col = canvas(W, H), hc = canvas(W, H);
-  const cx = col.getContext('2d'), hx = hc.getContext('2d');
+  const cx = col.getContext('2d', { willReadFrequently: true }), hx = hc.getContext('2d', { willReadFrequently: true });
   cx.fillStyle = '#3a3128'; cx.fillRect(0, 0, W, H);
   hx.fillStyle = '#1e1e1e'; hx.fillRect(0, 0, W, H);
 
   let y = 0;
-  while (y < H - 4) {
-    let rh = 92 + r() * 52;
-    if (H - (y + rh) < 70) rh = H - y;
+  while (y < H - 4 * K) {
+    let rh = (92 + r() * 52) * K;
+    if (H - (y + rh) < 70 * K) rh = H - y;
     let x = 0;
-    while (x < W - 4) {
-      let sw = 100 + r() * 120;
-      if (W - (x + sw) < 70) sw = W - x;
-      const p = stonePoly(x + 4, y + 4, sw - 8, rh - 8, r, 9);
+    while (x < W - 4 * K) {
+      let sw = (100 + r() * 120) * K;
+      if (W - (x + sw) < 70 * K) sw = W - x;
+      const p = stonePoly(x + 4 * K, y + 4 * K, sw - 8 * K, rh - 8 * K, r, 9 * K);
       const hue = 28 + r() * 12, sat = 10 + r() * 14, lit = 40 + r() * 16;
       cx.fillStyle = `hsl(${hue},${sat}%,${lit}%)`; poly(cx, p); cx.fill();
       // Light worn top, darker edges
@@ -201,39 +225,60 @@ export function pathTextures(seed = 11) {
       hx.fillStyle = `rgb(${base},${base},${base})`; poly(hx, p); hx.fill();
       hx.fillStyle = `rgb(${base + 25},${base + 25},${base + 25})`; poly(hx, scalePoly(p, 0.9)); hx.fill();
       hx.fillStyle = `rgb(${base + 40},${base + 40},${base + 40})`; poly(hx, scalePoly(p, 0.78)); hx.fill();
-      if (r() < 0.35) crack([[cx, 'rgba(25,18,12,0.85)'], [hx, '#2a2a2a']], r, x + sw * (0.3 + r() * 0.4), y + rh * (0.3 + r() * 0.4), 40 + r() * 70, 2);
+      if (r() < 0.35) crack([[cx, 'rgba(25,18,12,0.85)'], [hx, '#2a2a2a']], r, x + sw * (0.3 + r() * 0.4), y + rh * (0.3 + r() * 0.4), (40 + r() * 70) * K, 2 * K);
+      // small chips and pits
+      for (let c = 0; c < 3; c++) {
+        if (r() < 0.5) continue;
+        const px = x + sw * (0.15 + r() * 0.7), py = y + rh * (0.15 + r() * 0.7), pr = (1.5 + r() * 2.5) * K;
+        for (const [ctx2, st] of [[cx, 'rgba(40,30,22,0.22)'], [hx, 'rgba(90,90,90,0.5)']]) { ctx2.fillStyle = st; ctx2.beginPath(); ctx2.arc(px, py, pr, 0, Math.PI * 2); ctx2.fill(); }
+      }
       x += sw;
     }
     y += rh;
   }
   const hgt = readGray(hc);
-  boxBlur(hgt, W, H, 2, false);
-  finishStone(col, hgt, W, H, seed + 3, { moss: 0.55, period: 6 });
+  boxBlur(hgt, W, H, 2 * K, false);
+  const { orm } = finishStone(col, hgt, W, H, seed + 3, { moss: 0.55, period: 6, wrap: false });
+  // contact shadow where the slab meets the curbs (both long edges)
+  const edge = 46 * K;
+  for (const [ctx2, dark] of [[cx, 'rgb(120,110,100)'], [orm.getContext('2d', { willReadFrequently: true }), 'rgb(130,255,255)']]) {
+    ctx2.save();
+    ctx2.globalCompositeOperation = 'multiply';
+    let g = ctx2.createLinearGradient(0, 0, edge, 0);
+    g.addColorStop(0, dark); g.addColorStop(1, 'rgb(255,255,255)');
+    ctx2.fillStyle = g; ctx2.fillRect(0, 0, edge, H);
+    g = ctx2.createLinearGradient(W, 0, W - edge, 0);
+    g.addColorStop(0, dark); g.addColorStop(1, 'rgb(255,255,255)');
+    ctx2.fillStyle = g; ctx2.fillRect(W - edge, 0, edge, H);
+    ctx2.restore();
+  }
   return {
     map: toTexture(col, true),
-    normalMap: toTexture(normalFromHeight(hgt, W, H, 5.5, false), false),
+    normalMap: toTexture(normalFromHeight(hgt, W, H, 5.5 * K, false), false),
+    ormMap: toTexture(orm, false),
   };
 }
 
 // Ashlar masonry for walls, curbs, pillars — tiles in both directions.
 export function wallTextures(seed = 23) {
-  const W = 512, H = 512;
+  const K = 2;
+  const W = 512 * K, H = 512 * K;
   const r = rng(seed);
   const col = canvas(W, H), hc = canvas(W, H);
-  const cx = col.getContext('2d'), hx = hc.getContext('2d');
+  const cx = col.getContext('2d', { willReadFrequently: true }), hx = hc.getContext('2d', { willReadFrequently: true });
   cx.fillStyle = '#2e2620'; cx.fillRect(0, 0, W, H);
   hx.fillStyle = '#1a1a1a'; hx.fillRect(0, 0, W, H);
   const rows = 8, rh = H / rows;
   for (let row = 0; row < rows; row++) {
-    let x = -r() * 80;
+    let x = -r() * 80 * K;
     const startX = x;
     while (x < W + startX) {
-      let sw = 90 + r() * 110;
-      if (W + startX - (x + sw) < 60) sw = W + startX - x;
+      let sw = (90 + r() * 110) * K;
+      if (W + startX - (x + sw) < 60 * K) sw = W + startX - x;
       const hue = 26 + r() * 10, sat = 8 + r() * 10, lit = 34 + r() * 16;
       const base = 145 + r() * 50;
       for (const off of [0, W, -W]) {
-        const p = stonePoly(x + 3 + off, row * rh + 3, sw - 6, rh - 6, r, 6);
+        const p = stonePoly(x + 3 * K + off, row * rh + 3 * K, sw - 6 * K, rh - 6 * K, r, 6 * K);
         cx.fillStyle = `hsl(${hue},${sat}%,${lit}%)`; poly(cx, p); cx.fill();
         hx.fillStyle = `rgb(${base},${base},${base})`; poly(hx, p); hx.fill();
         hx.fillStyle = `rgb(${base + 30},${base + 30},${base + 30})`; poly(hx, scalePoly(p, 0.86)); hx.fill();
@@ -242,11 +287,12 @@ export function wallTextures(seed = 23) {
     }
   }
   const hgt = readGray(hc);
-  boxBlur(hgt, W, H, 2, true);
-  finishStone(col, hgt, W, H, seed + 5, { moss: 0.7, period: 8 });
+  boxBlur(hgt, W, H, 2 * K, true);
+  const { orm } = finishStone(col, hgt, W, H, seed + 5, { moss: 0.7, period: 8, wrap: true });
   return {
     map: toTexture(col, true),
-    normalMap: toTexture(normalFromHeight(hgt, W, H, 5, true), false),
+    normalMap: toTexture(normalFromHeight(hgt, W, H, 5 * K, true), false),
+    ormMap: toTexture(orm, false),
   };
 }
 
@@ -255,7 +301,7 @@ export function junctionTextures(seed = 37) {
   const S = 512, c0 = S / 2;
   const r = rng(seed);
   const col = canvas(S, S), hc = canvas(S, S), orm = canvas(S, S), em = canvas(S, S);
-  const cx = col.getContext('2d'), hx = hc.getContext('2d'), ox = orm.getContext('2d'), ex = em.getContext('2d');
+  const cx = col.getContext('2d', { willReadFrequently: true }), hx = hc.getContext('2d', { willReadFrequently: true }), ox = orm.getContext('2d', { willReadFrequently: true }), ex = em.getContext('2d', { willReadFrequently: true });
   cx.fillStyle = '#3a3128'; cx.fillRect(0, 0, S, S);
   hx.fillStyle = '#202020'; hx.fillRect(0, 0, S, S);
   ox.fillStyle = 'rgb(255,225,0)'; ox.fillRect(0, 0, S, S); // G = roughness, B = metalness
@@ -329,7 +375,10 @@ export function junctionTextures(seed = 37) {
   }
   const hgt = readGray(hc);
   boxBlur(hgt, S, S, 2, false);
-  finishStone(col, hgt, S, S, seed + 9, { moss: 0.35, period: 6 });
+  const { ao } = finishStone(col, hgt, S, S, seed + 9, { moss: 0.35, period: 6, wrap: false });
+  const oimg = ox.getImageData(0, 0, S, S);
+  for (let i = 0; i < S * S; i++) oimg.data[i * 4] = ao[i] * 255; // R = ambient occlusion
+  ox.putImageData(oimg, 0, 0);
   return {
     map: toTexture(col, true, false),
     normalMap: toTexture(normalFromHeight(hgt, S, S, 5, false), false, false),
@@ -343,7 +392,7 @@ export function reliefTextures(seed = 51) {
   const W = 512, H = 512;
   const r = rng(seed);
   const col = canvas(W, H), hc = canvas(W, H), em = canvas(W, H);
-  const cx = col.getContext('2d'), hx = hc.getContext('2d'), ex = em.getContext('2d');
+  const cx = col.getContext('2d', { willReadFrequently: true }), hx = hc.getContext('2d', { willReadFrequently: true }), ex = em.getContext('2d', { willReadFrequently: true });
   cx.fillStyle = 'hsl(30,12%,36%)'; cx.fillRect(0, 0, W, H);
   hx.fillStyle = '#707070'; hx.fillRect(0, 0, W, H);
   ex.fillStyle = '#000'; ex.fillRect(0, 0, W, H);
@@ -398,18 +447,19 @@ export function reliefTextures(seed = 51) {
 
   const hgt = readGray(hc);
   boxBlur(hgt, W, H, 3, false);
-  finishStone(col, hgt, W, H, seed + 2, { moss: 0.5, period: 6 });
+  const { orm } = finishStone(col, hgt, W, H, seed + 2, { moss: 0.5, period: 6, wrap: false });
   return {
     map: toTexture(col, true, false),
     normalMap: toTexture(normalFromHeight(hgt, W, H, 4, false), false, false),
     emissiveMap: toTexture(em, true, false),
+    ormMap: toTexture(orm, false, false),
   };
 }
 
 export function barkTextures(seed = 61) {
   const W = 256, H = 512;
   const col = canvas(W, H);
-  const ctx = col.getContext('2d');
+  const ctx = col.getContext('2d', { willReadFrequently: true });
   const img = ctx.createImageData(W, H);
   const d = img.data;
   const hgt = new Float32Array(W * H);
@@ -437,7 +487,7 @@ export function barkTextures(seed = 61) {
 export function flameTexture() {
   const W = 64, H = 128;
   const c = canvas(W, H);
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   const img = ctx.createImageData(W, H);
   const d = img.data;
   for (let y = 0; y < H; y++) {
@@ -464,7 +514,7 @@ export function flameTexture() {
 export function glowTexture() {
   const S = 64;
   const c = canvas(S, S);
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
   g.addColorStop(0, 'rgba(255,255,255,1)');
   g.addColorStop(0.25, 'rgba(255,255,255,0.55)');
@@ -480,7 +530,7 @@ export function glowTexture() {
 export function cloudNoiseTexture(seed = 77) {
   const S = 256;
   const c = canvas(S, S);
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   const img = ctx.createImageData(S, S);
   const d = img.data;
   const n = makeNoise(seed, 8);
@@ -496,5 +546,85 @@ export function cloudNoiseTexture(seed = 77) {
   ctx.putImageData(img, 0, 0);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// Foliage with alpha: hanging vine curtains and fern tufts.
+function leaf(ctx, x, y, len, wid, ang, color) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(ang);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(len * 0.5, -wid, len, 0);
+  ctx.quadraticCurveTo(len * 0.5, wid, 0, 0);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(210,235,160,0.35)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(1, 0); ctx.lineTo(len * 0.9, 0); ctx.stroke();
+  ctx.restore();
+}
+
+export function vineTexture(seed = 91) {
+  const W = 256, H = 512;
+  const r = rng(seed);
+  const c = canvas(W, H);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  for (let k = 0; k < 9; k++) {
+    let x = 12 + r() * (W - 24);
+    const len = H * (0.45 + r() * 0.55);
+    const ph = r() * 6;
+    ctx.strokeStyle = `hsl(${85 + r() * 20},40%,${16 + r() * 8}%)`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(x, 0);
+    const pts = [];
+    for (let y = 0; y <= len; y += 8) {
+      const xx = x + Math.sin(y * 0.03 + ph) * 10;
+      ctx.lineTo(xx, y); pts.push([xx, y]);
+    }
+    ctx.stroke();
+    for (let i = 1; i < pts.length; i += 2) {
+      const [px, py] = pts[i];
+      const side = i % 4 === 1 ? 1 : -1;
+      const sz = 1 - (py / len) * 0.4;
+      leaf(ctx, px, py, (14 + r() * 10) * sz, (6 + r() * 4) * sz, side > 0 ? 0.5 + r() * 0.5 : Math.PI - 0.5 - r() * 0.5,
+        `hsl(${92 + r() * 30},${42 + r() * 20}%,${20 + r() * 18}%)`);
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = ANISO;
+  return t;
+}
+
+export function fernTexture(seed = 97) {
+  const S = 256;
+  const r = rng(seed);
+  const c = canvas(S, S);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  const fronds = 9;
+  for (let f = 0; f < fronds; f++) {
+    const a = -Math.PI / 2 + (f / (fronds - 1) - 0.5) * 2.4 + (r() - 0.5) * 0.2;
+    const len = S * (0.55 + r() * 0.35);
+    const bend = (f / (fronds - 1) - 0.5) * 0.9;
+    const x0 = S / 2, y0 = S - 4;
+    const steps = 18;
+    let px = x0, py = y0, ang = a;
+    const green = `hsl(${95 + r() * 25},${45 + r() * 15}%,${22 + r() * 14}%)`;
+    ctx.strokeStyle = 'hsl(90,35%,18%)'; ctx.lineWidth = 2;
+    for (let i = 0; i < steps; i++) {
+      const nx = px + Math.cos(ang) * len / steps, ny = py + Math.sin(ang) * len / steps;
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(nx, ny); ctx.stroke();
+      const sz = 1 - i / steps;
+      if (i > 1) {
+        leaf(ctx, nx, ny, 16 * sz + 4, 4.5 * sz + 1.5, ang - 1.2, green);
+        leaf(ctx, nx, ny, 16 * sz + 4, 4.5 * sz + 1.5, ang + 1.2, green);
+      }
+      px = nx; py = ny; ang += bend / steps * 1.6;
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = ANISO;
   return t;
 }

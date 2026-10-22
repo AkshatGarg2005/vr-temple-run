@@ -12,7 +12,8 @@ const store = {
   set(k, v) { try { localStorage.setItem('relicrun.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
 
-const settings = Object.assign({ tilt: IS_TOUCH, sound: true, firstPerson: false, high: true, motion: 'normal', hints: true }, store.get('settings', {}));
+const settings = Object.assign({ tilt: IS_TOUCH, sound: true, firstPerson: false, motion: 'normal', hints: true }, store.get('settings', {}));
+delete settings.high; // graphics always run at maximum quality
 const MOTION_LEVELS = ['normal', 'high', 'low'];
 const MOTION_LABEL = { normal: 'Normal', high: 'High', low: 'Low' };
 
@@ -36,11 +37,12 @@ renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local');
 
 const quality = {
-  maxDpr: () => (settings.high ? (IS_MOBILE ? 1.6 : 2) : (IS_MOBILE ? 1 : 1.25)) * (game && game.mode === 'cardboard' ? 0.85 : 1),
+  // Always the top graphics tier; resolution scales down on its own if the frame rate drops.
+  maxDpr: () => 2 * (game && game.mode === 'cardboard' ? 0.85 : 1),
   minDpr: 0.6,
   dpr: 1,
 };
-quality.dpr = Math.min(window.devicePixelRatio || 1, settings.high ? (IS_MOBILE ? 1.6 : 2) : 1.25);
+quality.dpr = Math.min(window.devicePixelRatio || 1, 2);
 renderer.setPixelRatio(quality.dpr);
 renderer.setSize(innerWidth, innerHeight);
 
@@ -129,8 +131,7 @@ function applyQuality() {
   quality.dpr = Math.min(window.devicePixelRatio || 1, quality.maxDpr());
   renderer.setPixelRatio(quality.dpr);
   renderer.setSize(innerWidth, innerHeight);
-  view.setup(true, settings.high ? (IS_MOBILE ? 2 : 4) : 0);
-  game.setShadowSize(settings.high ? (IS_MOBILE ? 1024 : 2048) : 1024);
+  view.setup(true, 4);
   onResize();
 }
 
@@ -246,7 +247,6 @@ function syncToggles() {
   $('tg-sound').setAttribute('aria-pressed', String(!!settings.sound));
   $('tg-cam').setAttribute('aria-pressed', String(!!settings.firstPerson));
   $('tg-hints').setAttribute('aria-pressed', String(!!settings.hints));
-  $('tg-quality').setAttribute('aria-pressed', String(!!settings.high));
   $('tg-motion-val').textContent = MOTION_LABEL[settings.motion] || 'Normal';
 }
 
@@ -260,7 +260,6 @@ function wireUI() {
   bindToggle('tg-sound', 'sound', () => { sound.init(); sound.setEnabled(settings.sound); });
   bindToggle('tg-cam', 'firstPerson');
   bindToggle('tg-hints', 'hints', () => { if (!settings.hints) game.clearHint(); });
-  bindToggle('tg-quality', 'high', () => applyQuality());
   $('tg-motion').addEventListener('click', () => {
     settings.motion = MOTION_LEVELS[(MOTION_LEVELS.indexOf(settings.motion) + 1) % MOTION_LEVELS.length];
     input.body.setSensitivity(settings.motion);
@@ -328,7 +327,7 @@ function frame(ts) {
   lastTs = now;
   clock += dt;
   game.update(dt, clock);
-  view.render(clock, game.flash);
+  view.render(clock, game.flash, game.speedFx());
 
   if (!renderer.xr.isPresenting && (game.state === 'run' || game.state === 'menu')) {
     perf.t += dt; perf.frames++; perf.cooldown -= dt;
@@ -337,6 +336,7 @@ function frame(ts) {
       perf.t = 0; perf.frames = 0;
       if (perf.cooldown <= 0) {
         let next = quality.dpr;
+        if (fps < 38 && quality.dpr <= quality.minDpr + 0.01 && view.raysEnabled) view.setRays(false);
         if (fps < 46 && quality.dpr > quality.minDpr) next = Math.max(quality.minDpr, quality.dpr - 0.15);
         else if (fps > 58 && quality.dpr < Math.min(window.devicePixelRatio || 1, quality.maxDpr())) next = Math.min(quality.maxDpr(), quality.dpr + 0.1);
         if (Math.abs(next - quality.dpr) > 0.01) {
@@ -356,7 +356,7 @@ async function boot() {
   } catch { /* fonts optional */ }
   game = new Game({ renderer, input, sound, ui, settings, mobile: IS_MOBILE });
   view = new View(renderer, game.scene, game.camera);
-  view.setup(true, settings.high ? (IS_MOBILE ? 2 : 4) : 0);
+  view.setup(true, 4);
   wireUI();
   onResize();
   // warm up shaders before revealing the scene
@@ -364,7 +364,7 @@ async function boot() {
   renderer.compile(game.scene, game.camera);
   renderer.setAnimationLoop(frame);
   $('loading').hidden = true;
-  window.__relic = { game, renderer, view };
+  window.__relic = { game, renderer, view, loadMs: Math.round(performance.now()) };
   if (/[?&]debug\b/.test(location.search)) startDebug();
 }
 

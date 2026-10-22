@@ -86,6 +86,8 @@ export class World {
       jTop: mk(jg.top, M.junction, 24, false),
       jStruct: mk(jg.structure, M.stone, 24, true),
       jCurb: mk(jg.curb, M.stone, 30, true),
+      vines: mk(B.vineCurtainGeometry(), M.vineCurtain, 280, false),
+      ferns: mk(B.fernGeometry(), M.fern, 900, false),
     };
     // per-instance tint so slabs don't look stamped
     const tint = new THREE.Color();
@@ -110,6 +112,9 @@ export class World {
     const idolMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 });
     const eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 2.2, 0.5) });
 
+    const shrineGeo = B.shrineGeometry();
+    const doorMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 1.3, 0.35) });
+    const waterMat = B.waterfallMaterial(opts.noiseTex);
     this.O = {
       brazier: new ObjPool(root, () => B.makeBrazier(M)),
       wall: new ObjPool(root, () => B.makeFrontWall(M)),
@@ -128,6 +133,15 @@ export class World {
         const m = new THREE.Mesh(geo, M.rock);
         m.userData.radius = geo.userData.radius;
         return m;
+      }),
+      waterfall: new ObjPool(root, () => B.makeWaterfall(waterMat, M.glow)),
+      shrine: new ObjPool(root, () => {
+        const g = new THREE.Group();
+        g.add(new THREE.Mesh(shrineGeo, idolMat));
+        const door = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.9), doorMat);
+        door.position.set(0, shrineGeo.userData.doorY, 1.62);
+        g.add(door);
+        return g;
       }),
       idol: new ObjPool(root, () => {
         const g = new THREE.Group();
@@ -394,6 +408,15 @@ export class World {
         this.addInst(seg, this.P.top, s, 0, 0, flip);
         this.addInst(seg, this.P.struct, s, 0, 0);
         if (t % 2 === 1) this.addInst(seg, this.P.pillar, s, 0, 0, 0, 1);
+        // jungle creeping over the bridge: vines down the sides, ferns on the curbs
+        for (const side of [-1, 1]) {
+          if (rand() < 0.5) this.addInst(seg, this.P.vines, s + (rand() - 0.5) * 0.6, side * (HALF_W + CURB_W + 0.19), -0.24, side > 0 ? 0 : Math.PI, 0.85 + rand() * 0.3);
+        }
+        const tufts = 1 + Math.floor(rand() * 3);
+        for (let k = 0; k < tufts; k++) {
+          const side = rand() < 0.5 ? -1 : 1;
+          this.addInst(seg, this.P.ferns, t * TILE + 0.5 + rand() * (TILE - 1), side * (HALF_W + CURB_W * (0.3 + rand() * 0.5)), CURB_H + 0.05, rand() * Math.PI * 2, 0.6 + rand() * 0.7);
+        }
       }
     }
     const busy = (s, r) => seg.obstacles.some((o) => o.type !== 'block' && s > o.s0 - r && s < o.s1 + r) ||
@@ -416,37 +439,58 @@ export class World {
       const s = 14 + rand() * Math.max(1, seg.len - 30);
       const lat = (rand() < 0.5 ? -1 : 1) * (16 + rand() * 30);
       const p = seg.world(s, lat, -4 - rand() * 12);
-      this.addSpire(seg, p, rand() < 0.22);
+      const roll = rand();
+      this.addSpire(seg, p, roll < 0.18 ? 'idol' : roll < 0.36 ? 'shrine' : null, rand() < 0.38);
     }
   }
 
-  addSpire(seg, p, withIdol) {
+  // crown: 'idol' | 'shrine' | null. waterfall: pour water off the side facing the path.
+  addSpire(seg, p, crown, waterfall) {
     const pool = this.O.spire;
     const o = pool.acquire();
     const scale = 0.8 + rand() * 0.6;
-    const radius = Math.max(o.userData.radius * scale, withIdol ? 7 : 0);
+    const radius = Math.max(o.userData.radius * scale, crown === 'idol' ? 7 : crown === 'shrine' ? 9 : 0);
     if (this.hitsTrack(p.x, p.z, radius + 1.5)) { pool.release(o); return; }
     o.position.copy(p);
     o.rotation.set(0, rand() * Math.PI * 2, 0);
     o.scale.set(scale, 1, scale);
-    const sp = { o, pool, x: p.x, z: p.z, radius, seg, idol: null };
-    if (withIdol) {
+    const sp = { o, pool, x: p.x, z: p.z, radius, seg, idol: null, shrine: null, water: null };
+    const loc = seg.local(p.x, p.z);
+    const toPath = seg.world(loc.s, 0, 0).sub(p);
+    toPath.y = 0;
+    toPath.normalize();
+    const facePath = Math.atan2(toPath.x, toPath.z);
+    if (crown === 'idol') {
       const idol = this.O.idol.acquire();
       idol.position.set(p.x, p.y - 0.4, p.z);
-      // face the path
-      const loc = seg.local(p.x, p.z);
-      const toPath = seg.world(loc.s, 0, 0).sub(p);
-      idol.rotation.set(0, Math.atan2(toPath.x, toPath.z), 0);
+      idol.rotation.set(0, facePath, 0);
       sp.idol = idol;
+    } else if (crown === 'shrine') {
+      const sh = this.O.shrine.acquire();
+      sh.position.set(p.x, p.y - 0.3, p.z);
+      sh.rotation.set(0, facePath, 0);
+      sp.shrine = sh;
+    }
+    if (waterfall) {
+      const w = this.O.waterfall.acquire();
+      const edge = o.userData.radius * scale * 0.86;
+      w.position.set(p.x + toPath.x * edge, p.y - 0.15, p.z + toPath.z * edge);
+      w.rotation.set(0, facePath, 0);
+      w.userData.spray.position.set(0, -26 - p.y, 5);
+      w.updateMatrixWorld(true);
+      sp.water = w;
     }
     seg.spires.push(sp);
     this.activeSpires.push(sp);
   }
+
   releaseSpire(sp) {
     if (sp.released) return;
     sp.released = true;
     sp.pool.release(sp.o);
     if (sp.idol) this.O.idol.release(sp.idol);
+    if (sp.shrine) this.O.shrine.release(sp.shrine);
+    if (sp.water) this.O.waterfall.release(sp.water);
     const i = this.activeSpires.indexOf(sp);
     if (i >= 0) this.activeSpires.splice(i, 1);
   }
@@ -514,6 +558,7 @@ export class World {
 
   // ------------------------------------------------------------------ per frame
   update(dt, time, player) {
+    B.FX_TIME.value = time;
     if (this.pending && this.current === this.pending.at && player.s > 28) {
       this.release(this.pending.seg);
       this.pending = null;
