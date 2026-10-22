@@ -1,0 +1,88 @@
+// In-world HUD for headset play: canvas-textured panels attached to the
+// camera rig (they stay in the running direction instead of glued to the face).
+import * as THREE from 'three';
+
+function panel(w, h, pxW, pxH) {
+  const c = document.createElement('canvas');
+  c.width = pxW; c.height = pxH;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, fog: false, toneMapped: false });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  mesh.renderOrder = 1000;
+  mesh.frustumCulled = false;
+  return { c, ctx: c.getContext('2d'), tex, mesh, key: '' };
+}
+
+const DISPLAY = '"Cinzel", "Times New Roman", serif';
+const UI = '"Barlow Condensed", "Arial Narrow", Arial, sans-serif';
+
+export class VRHud {
+  constructor(rig) {
+    this.group = new THREE.Group();
+    rig.add(this.group);
+    this.top = panel(1.5, 0.28, 768, 144);
+    // above the horizon so it never covers the path ahead
+    this.top.mesh.position.set(0, 1.2, -3.0);
+    this.top.mesh.rotation.x = 0.36;
+    this.center = panel(2.6, 1.3, 1024, 512);
+    this.center.mesh.position.set(0, 0.05, -2.3);
+    this.group.add(this.top.mesh, this.center.mesh);
+    this.group.visible = false;
+    this.center.mesh.visible = false;
+  }
+
+  setVisible(v) { this.group.visible = v; }
+
+  setStats(score, coins, mult, flash) {
+    const key = `${score}|${coins}|${mult}|${flash || ''}`;
+    const p = this.top;
+    if (key === p.key) return;
+    p.key = key;
+    const { ctx, c } = p;
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.fillStyle = 'rgba(16,10,8,0.55)';
+    ctx.beginPath(); ctx.roundRect(4, 4, c.width - 8, c.height - 8, 24); ctx.fill();
+    ctx.textBaseline = 'middle';
+    ctx.font = `700 64px ${UI}`;
+    ctx.fillStyle = '#f6e6c8';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(score), 40, c.height / 2 + 2);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#ffd88a';
+    ctx.fillText(`● ${coins}`, c.width - 40, c.height / 2 + 2);
+    ctx.textAlign = 'center';
+    // centre slot: multiplier, or a flash confirming a real jump / crouch
+    ctx.fillStyle = flash ? '#6fd3a8' : '#f0b44c';
+    ctx.font = `700 ${flash ? 56 : 48}px ${UI}`;
+    ctx.fillText(flash || `x${mult}`, c.width / 2, c.height / 2 + 2);
+    p.tex.needsUpdate = true;
+  }
+
+  // lines: [{text, size, color, font}]
+  message(lines) {
+    const p = this.center;
+    if (!lines) { p.mesh.visible = false; p.key = ''; return; }
+    p.mesh.visible = true;
+    const key = JSON.stringify(lines);
+    if (key === p.key) return;
+    p.key = key;
+    const { ctx, c } = p;
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.fillStyle = 'rgba(16,10,8,0.72)';
+    ctx.beginPath(); ctx.roundRect(6, 6, c.width - 12, c.height - 12, 30); ctx.fill();
+    ctx.strokeStyle = 'rgba(240,180,76,0.5)'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const total = lines.reduce((a, l) => a + (l.size || 48) * 1.25, 0);
+    let y = c.height / 2 - total / 2;
+    for (const l of lines) {
+      const s = l.size || 48;
+      ctx.font = `${l.weight || 800} ${s}px ${l.display ? DISPLAY : UI}`;
+      ctx.fillStyle = l.color || '#f6e6c8';
+      ctx.fillText(l.text, c.width / 2, y + s * 0.62);
+      y += s * 1.25;
+    }
+    p.tex.needsUpdate = true;
+  }
+}

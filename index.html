@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#120c0a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Relic Run</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23120c0a'/%3E%3Cpath d='M16 4l7 12-7 12-7-12z' fill='%23f0b44c'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800;900&family=Barlow+Condensed:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- In-game HUD (hidden in Cardboard VR, where a 3D HUD is used instead) -->
+  <div id="hud" hidden>
+    <div class="hud-block hud-score">
+      <span class="hud-label">Score</span>
+      <span id="hud-score" class="hud-value">0</span>
+    </div>
+    <div class="hud-block hud-coins">
+      <span class="coin-dot" aria-hidden="true"></span>
+      <span id="hud-coins" class="hud-value">0</span>
+    </div>
+    <div class="hud-block hud-dist">
+      <span id="hud-dist" class="hud-value">0</span><span class="hud-unit">m</span>
+      <span id="hud-mult" class="hud-mult">x1</span>
+    </div>
+    <div id="hud-power" class="hud-power" hidden>
+      <span id="hud-power-name">Magnet</span>
+      <span class="power-bar"><span id="hud-power-fill"></span></span>
+    </div>
+    <button id="btn-pause" class="icon-btn" aria-label="Pause">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- Title screen -->
+  <section id="menu" class="overlay">
+    <div class="menu-inner">
+      <div class="brand">
+        <p class="eyebrow">Escape the Sun Temple</p>
+        <h1 class="title">Relic<br>Run</h1>
+        <p class="tagline">You took the golden idol. The temple guardians want it back. Run the cliff bridges, swing through the turns, and don't look down.</p>
+      </div>
+
+      <div class="menu-actions">
+        <button id="btn-play" class="btn btn-primary">
+          <span class="btn-title">Run</span>
+          <span class="btn-sub">Play on this screen</span>
+        </button>
+        <button id="btn-cardboard" class="btn btn-vr">
+          <span class="btn-title">Phone VR</span>
+          <span class="btn-sub">First person in a Cardboard-style headset. Your body is the controller</span>
+        </button>
+        <button id="btn-webxr" class="btn btn-vr" hidden>
+          <span class="btn-title">Enter VR</span>
+          <span class="btn-sub">WebXR headset detected</span>
+        </button>
+
+        <div class="toggles">
+          <button id="tg-tilt" class="chip" aria-pressed="true">Tilt to steer</button>
+          <button id="tg-sound" class="chip" aria-pressed="true">Sound</button>
+          <button id="tg-cam" class="chip" aria-pressed="false">First person</button>
+          <button id="tg-quality" class="chip" aria-pressed="true">High graphics</button>
+          <button id="tg-motion" class="chip chip-value" aria-label="Jump and crouch sensitivity">Body sensing: <span id="tg-motion-val">Normal</span></button>
+        </div>
+
+        <p id="best-line" class="best" hidden>Best run <strong id="best-score">0</strong></p>
+      </div>
+
+      <div class="howto">
+        <div class="howto-col" data-for="desktop">
+          <h2>Keyboard</h2>
+          <ul>
+            <li><kbd>←</kbd><kbd>→</kbd> turn at junctions, change lane elsewhere</li>
+            <li><kbd>↑</kbd> or <kbd>Space</kbd> jump</li>
+            <li><kbd>↓</kbd> slide</li>
+            <li><kbd>P</kbd> pause, <kbd>C</kbd> switch camera</li>
+          </ul>
+        </div>
+        <div class="howto-col" data-for="touch">
+          <h2>Phone</h2>
+          <ul>
+            <li>Tilt the phone to drift across the path and grab coins</li>
+            <li>Swipe left or right to turn</li>
+            <li>Swipe up to jump, down to slide</li>
+          </ul>
+        </div>
+        <div class="howto-col" data-for="vr">
+          <h2>Phone VR</h2>
+          <ul>
+            <li>Look around freely, turns happen on their own</li>
+            <li>Facing forward, tilt your head left or right to change lane, level for the centre</li>
+            <li>Jump for real to jump, crouch for real to slide</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <p id="secure-warning" class="secure-warning" hidden>Motion sensors need HTTPS. Open this page through <code>node server.js</code> (or any HTTPS host) to use tilt and VR head tracking on a phone.</p>
+  </section>
+
+  <!-- Pause -->
+  <section id="pause" class="overlay overlay-dim" hidden>
+    <div class="panel">
+      <h2 class="panel-title">Paused</h2>
+      <div class="panel-actions">
+        <button id="btn-resume" class="btn btn-primary"><span class="btn-title">Resume</span></button>
+        <button id="btn-recenter" class="btn btn-ghost"><span class="btn-title">Recenter view</span></button>
+        <button id="btn-quit" class="btn btn-ghost"><span class="btn-title">Main menu</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Game over -->
+  <section id="gameover" class="overlay overlay-dim" hidden>
+    <div class="panel">
+      <p id="go-reason" class="eyebrow">The guardians caught you</p>
+      <h2 class="panel-title">Run Over</h2>
+      <dl class="stats">
+        <div><dt>Score</dt><dd id="go-score">0</dd></div>
+        <div><dt>Distance</dt><dd id="go-dist">0 m</dd></div>
+        <div><dt>Coins</dt><dd id="go-coins">0</dd></div>
+      </dl>
+      <p id="go-best" class="best-new" hidden>New best run</p>
+      <div class="panel-actions">
+        <button id="btn-again" class="btn btn-primary"><span class="btn-title">Run again</span></button>
+        <button id="btn-menu" class="btn btn-ghost"><span class="btn-title">Main menu</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Portrait warning while in phone VR -->
+  <section id="rotate" class="overlay overlay-solid" hidden>
+    <div class="rotate-box">
+      <div class="phone-icon" aria-hidden="true"></div>
+      <p>Turn your phone sideways and slide it into the headset.</p>
+      <button id="btn-exit-vr" class="btn btn-ghost"><span class="btn-title">Exit VR</span></button>
+    </div>
+  </section>
+
+  <div id="loading" class="overlay overlay-solid">
+    <p class="loading-text">Carving the temple…</p>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
