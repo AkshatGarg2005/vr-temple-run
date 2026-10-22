@@ -146,11 +146,13 @@ export class Game {
       this.state = 'countdown';
       this.countT = 3.2;
     }
+    this.clearHint();
     this.ui.onState(this.state);
     this.sound.startMusic();
   }
 
   toMenu() {
+    this.clearHint();
     this.state = 'menu';
     this.mode = 'flat';
     this.resetRun();
@@ -334,6 +336,7 @@ export class Game {
   die(type) {
     const P = this.P;
     if (this.state !== 'run') return;
+    this.clearHint();
     this.state = 'dying';
     P.deadType = type;
     P.deadT = 0;
@@ -632,6 +635,7 @@ export class Game {
     this.sound.setPace((P.speed - START_SPEED) / (MAX_SPEED - START_SPEED), close ? 1 : 0);
 
     this.world.update(dt, t, P);
+    this.updateHints();
     this.runner.root.position.copy(P.pos);
     this.runner.root.rotation.set(0, P.yaw, 0);
     this.runner.animate(dt, this.runnerState(t));
@@ -650,6 +654,53 @@ export class Game {
       if (this.bodyFlash) { this.bodyFlash.t -= dt; if (this.bodyFlash.t <= 0) this.bodyFlash = null; }
       this.vrHud.setStats(Math.floor(P.score), P.coins, P.mult, this.bodyFlash && this.bodyFlash.text);
     }
+  }
+
+  // ------------------------------------------------------------------ hints
+  // Tells the player when to jump or slide: an early "get ready" cue, then a
+  // "now" cue with a sound. Phone VR cues come earlier because a real jump or
+  // crouch takes longer to detect than a key press.
+  updateHints() {
+    const P = this.P;
+    let want = null;
+    if (this.settings.hints && this.state === 'run') {
+      const vr = this.isVR();
+      const leadT = vr ? 1.5 : 1.0, nowT = vr ? 0.6 : 0.34;
+      const v = Math.max(P.speed, 1);
+      let best = null;
+      const consider = (seg, base) => {
+        for (const o of seg.obstacles) {
+          if (o.hit) continue;
+          const act = o.type === 'root' ? 'jump' : (o.type === 'log' || o.type === 'fire') ? 'slide' : null;
+          if (!act) continue;
+          const d = base + o.s0;
+          if (d > -0.3 && (!best || d < best.d)) best = { act, d };
+        }
+        for (const [a] of seg.gaps) {
+          const d = base + a;
+          if (d > -0.3 && (!best || d < best.d)) best = { act: 'jump', d };
+        }
+      };
+      consider(P.seg, -P.s);
+      if (P.seg.next) consider(P.seg.next, P.seg.len + PATH_W - P.s);
+      if (best && best.d / v <= leadT) {
+        const done = best.act === 'jump' ? P.airborne : P.sliding;
+        if (!done) want = { act: best.act, stage: best.d / v <= nowT ? 2 : 1 };
+      }
+    }
+    const key = want ? want.act + want.stage : '';
+    if (key === this.hintKey) return;
+    if (want && want.stage === 2) this.sound.hint(want.act);
+    this.hintKey = key;
+    const vr = this.isVR();
+    this.ui.hint(want && !vr ? want.act : null, want ? want.stage : 0);
+    this.vrHud.hint(want && vr ? want.act : null, want ? want.stage : 0);
+  }
+
+  clearHint() {
+    this.hintKey = '';
+    this.ui.hint(null, 0);
+    this.vrHud.hint(null, 0);
   }
 
   updateDying(dt, t) {

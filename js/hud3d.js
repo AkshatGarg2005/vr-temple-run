@@ -27,7 +27,12 @@ export class VRHud {
     this.top.mesh.rotation.x = 0.36;
     this.center = panel(2.6, 1.3, 1024, 512);
     this.center.mesh.position.set(0, 0.05, -2.3);
-    this.group.add(this.top.mesh, this.center.mesh);
+    // jump / crouch hint, low over the path ahead
+    this.hintP = panel(1.5, 0.42, 768, 216);
+    this.hintP.mesh.position.set(0, -0.34, -2.2);
+    this.hintP.mesh.rotation.x = -0.15;
+    this.hintP.mesh.visible = false;
+    this.group.add(this.top.mesh, this.center.mesh, this.hintP.mesh);
     this.group.visible = false;
     this.center.mesh.visible = false;
   }
@@ -56,6 +61,46 @@ export class VRHud {
     ctx.fillStyle = flash ? '#6fd3a8' : '#f0b44c';
     ctx.font = `700 ${flash ? 56 : 48}px ${UI}`;
     ctx.fillText(flash || `x${mult}`, c.width / 2, c.height / 2 + 2);
+    p.tex.needsUpdate = true;
+  }
+
+  // action: 'jump' | 'slide' | null. stage 1 = get ready, 2 = now.
+  hint(action, stage) {
+    const p = this.hintP;
+    if (!action) { p.mesh.visible = false; p.key = ''; return; }
+    p.mesh.visible = true;
+    const key = action + stage;
+    if (key === p.key) return;
+    p.key = key;
+    const { ctx, c } = p;
+    const now = stage === 2;
+    const color = now ? '#7cf0be' : '#ffd88a';
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.fillStyle = now ? 'rgba(10,40,28,0.78)' : 'rgba(16,10,8,0.6)';
+    ctx.beginPath(); ctx.roundRect(4, 4, c.width - 8, c.height - 8, 30); ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = now ? 6 : 3; ctx.stroke();
+    // arrow
+    const ax = 110, ay = c.height / 2, s = now ? 52 : 42, up = action === 'jump';
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(ax - s, ay + (up ? s * 0.55 : -s * 0.55));
+    ctx.lineTo(ax + s, ay + (up ? s * 0.55 : -s * 0.55));
+    ctx.lineTo(ax, ay + (up ? -s * 0.75 : s * 0.75));
+    ctx.closePath(); ctx.fill();
+    const word = up ? 'JUMP' : 'CROUCH';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const text = now ? word + '!' : word;
+    let size = now ? 104 : 80;
+    ctx.font = `800 ${size}px ${DISPLAY}`;
+    const maxW = c.width - 230;
+    const w = ctx.measureText(text).width;
+    if (w > maxW) { size = Math.floor(size * maxW / w); ctx.font = `800 ${size}px ${DISPLAY}`; }
+    ctx.fillText(text, 200, ay + (now ? 6 : -14));
+    if (!now) {
+      ctx.font = `600 36px ${UI}`;
+      ctx.fillStyle = 'rgba(246,230,200,0.8)';
+      ctx.fillText('get ready', 204, ay + 58);
+    }
     p.tex.needsUpdate = true;
   }
 

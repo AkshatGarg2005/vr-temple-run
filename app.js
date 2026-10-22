@@ -12,7 +12,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('relicrun.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
 
-const settings = Object.assign({ tilt: IS_TOUCH, sound: true, firstPerson: false, high: true, motion: 'normal' }, store.get('settings', {}));
+const settings = Object.assign({ tilt: IS_TOUCH, sound: true, firstPerson: false, high: true, motion: 'normal', hints: true }, store.get('settings', {}));
 const MOTION_LEVELS = ['normal', 'high', 'low'];
 const MOTION_LABEL = { normal: 'Normal', high: 'High', low: 'Low' };
 
@@ -67,6 +67,15 @@ const ui = {
     }
     $('hud-power').hidden = !(magnet > 0);
     if (magnet > 0) $('hud-power-fill').style.transform = `scaleX(${magnet.toFixed(3)})`;
+  },
+  hint(action, stage) {
+    const el = $('hint');
+    if (!action) { el.hidden = true; return; }
+    el.hidden = false;
+    el.dataset.action = action;
+    el.dataset.stage = String(stage);
+    const word = action === 'jump' ? 'Jump' : 'Slide';
+    $('hint-text').textContent = stage === 2 ? `${word}!` : word;
   },
   toast(text) {
     if (game.isVR()) {
@@ -236,6 +245,7 @@ function syncToggles() {
   $('tg-tilt').setAttribute('aria-pressed', String(!!settings.tilt));
   $('tg-sound').setAttribute('aria-pressed', String(!!settings.sound));
   $('tg-cam').setAttribute('aria-pressed', String(!!settings.firstPerson));
+  $('tg-hints').setAttribute('aria-pressed', String(!!settings.hints));
   $('tg-quality').setAttribute('aria-pressed', String(!!settings.high));
   $('tg-motion-val').textContent = MOTION_LABEL[settings.motion] || 'Normal';
 }
@@ -249,6 +259,7 @@ function wireUI() {
   bindToggle('tg-tilt', 'tilt', () => { if (settings.tilt) input.requestMotion(); });
   bindToggle('tg-sound', 'sound', () => { sound.init(); sound.setEnabled(settings.sound); });
   bindToggle('tg-cam', 'firstPerson');
+  bindToggle('tg-hints', 'hints', () => { if (!settings.hints) game.clearHint(); });
   bindToggle('tg-quality', 'high', () => applyQuality());
   $('tg-motion').addEventListener('click', () => {
     settings.motion = MOTION_LEVELS[(MOTION_LEVELS.indexOf(settings.motion) + 1) % MOTION_LEVELS.length];

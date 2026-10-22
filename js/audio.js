@@ -88,6 +88,14 @@ export class Sound {
   slide() { if (!this.ok()) return; const t = this.now(); this.noise(t, 0.45, { type: 'lowpass', f: 1800, to: 300, gain: 0.22 }); }
   turn() { if (!this.ok()) return; const t = this.now(); this.noise(t, 0.3, { f: 1600, to: 500, gain: 0.14, q: 1.5 }); }
   land() { if (!this.ok()) return; const t = this.now(); this.tone(120, t, 0.12, { to: 60, gain: 0.25 }); }
+  // "now" cue for hints: rising for jump, falling for slide/crouch
+  hint(action) {
+    if (!this.ok()) return;
+    const t = this.now();
+    const [a, b] = action === 'jump' ? [660, 990] : [990, 560];
+    this.tone(a, t, 0.09, { type: 'triangle', gain: 0.2 });
+    this.tone(b, t + 0.08, 0.14, { type: 'triangle', gain: 0.2 });
+  }
   power() {
     if (!this.ok()) return;
     const t = this.now();

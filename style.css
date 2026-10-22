@@ -438,3 +438,44 @@ body.vr .toast { display: none; }
   white-space: pre;
   pointer-events: none;
 }
+
+/* Jump / slide hints (normal screen; phone VR draws its own inside the headset) */
+.hint {
+  position: fixed;
+  left: 50%;
+  top: 60%;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 20px 8px 16px;
+  border: 2px solid var(--gold-hi);
+  border-radius: 10px;
+  background: rgba(18, 12, 9, 0.55);
+  transform: translateX(-50%) scale(0.9);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(1.4rem, 4.2vw, 2.2rem);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold-hi);
+  opacity: 0.75;
+  pointer-events: none;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+.hint-arrow {
+  width: 0; height: 0;
+  border-left: 0.5em solid transparent;
+  border-right: 0.5em solid transparent;
+  border-bottom: 0.7em solid currentColor;
+}
+.hint[data-action="slide"] .hint-arrow { border-bottom: 0; border-top: 0.7em solid currentColor; }
+.hint[data-stage="2"] {
+  opacity: 1;
+  transform: translateX(-50%) scale(1.12);
+  color: #7cf0be;
+  border-color: #7cf0be;
+  background: rgba(8, 36, 26, 0.7);
+  box-shadow: 0 0 28px rgba(124, 240, 190, 0.45);
+}
+body.vr .hint { display: none; }

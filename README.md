@@ -35,6 +35,8 @@ In Phone VR, the phone's accelerometer detects real jumps and crouches:
 
 After a run ends in Phone VR, jump to start again.
 
+**Hints** (title screen, on by default): before each root, gap, fallen log or fire trap, an arrow cue says **Jump** or **Slide** ("Crouch" in Phone VR). It appears dimmed as a "get ready" warning, then turns green with a short sound at the moment to act. In Phone VR the cue appears on a panel over the path, and earlier than on a normal screen, because a real jump or crouch takes longer to detect than a key press.
+
 `C` switches between the chase camera and first person when playing on a normal screen. On a WebXR headset with tracking (e.g. Quest), **Enter VR** appears on the title screen and your real head height drives jumps and crouches. The thumbstick changes lanes, the trigger jumps and the grip slides.
 
 ## Rules
