@@ -64,9 +64,17 @@ const GradeShader = {
       vec2 l = vec2((vUv.x - eOff) / eW, vUv.y);       // position inside this eye
       vec2 fc = l - 0.5;
       float r2 = dot(fc, fc);
-      // chromatic fringe toward the edges (a touch more at speed)
-      vec2 ca = fc * r2 * (0.012 + uSpeed * 0.012);
-      vec3 c = vec3(eyeTex(l + ca).r, eyeTex(l).g, eyeTex(l - ca).b);
+      // Camera-lens effects (colour fringe, glare, flare) are only for a
+      // single flat image. In a headset each eye would judge them on its own
+      // and the two images would disagree, so stereo skips them entirely.
+      bool lens = uStereo < 0.5;
+      vec3 c;
+      if (lens) {
+        vec2 ca = fc * r2 * (0.012 + uSpeed * 0.012);
+        c = vec3(eyeTex(l + ca).r, eyeTex(l).g, eyeTex(l - ca).b);
+      } else {
+        c = eyeTex(l);
+      }
       // speed blur: streak the screen edges toward the centre
       if (uSpeed > 0.01) {
         float k = uSpeed * smoothstep(0.06, 0.32, r2);
@@ -75,11 +83,10 @@ const GradeShader = {
         c = acc / 5.0;
       }
       // sun glare, anamorphic streak and lens ghosts (only when the sun disc is visible)
-      if (sun.z > 0.0) {
+      if (lens && sun.z > 0.0) {
         vec2 sp = sun.xy;
         float inside = step(0.0, sp.x) * step(sp.x, 1.0) * step(0.0, sp.y) * step(sp.y, 1.0);
         float vis = sun.z * inside * smoothstep(1.5, 6.0, dot(eyeTex(sp), vec3(0.2126, 0.7152, 0.0722)));
-        vis *= uStereo > 0.5 ? 0.7 : 1.0; // softer inside a headset, where glare fills more of the view
         if (vis > 0.0) {
           vec2 dv = (l - sp) * vec2(uAspect, 1.0);
           float ds = length(dv);
@@ -154,6 +161,9 @@ class GodRaysPass extends Pass {
   setSize(w, h) { this.rt.setSize(Math.max(1, Math.round(w / 2)), Math.max(1, Math.round(h / 2))); }
   render(renderer, writeBuffer, readBuffer) {
     const v = this.view;
+    // Screen-space shafts depend on what each eye sees around the sun, so the
+    // two eyes would get different light. Flat screen only.
+    if (v.isStereo) return;
     if (!(v.sunL.z > 0 || v.sunR.z > 0)) return;
     const u = this.blur.material.uniforms;
     u.tScene.value = readBuffer.texture;
@@ -165,7 +175,7 @@ class GodRaysPass extends Pass {
     renderer.clear();
     this.blur.render(renderer);
     this.add.material.uniforms.tRays.value = this.rt.texture;
-    this.add.material.uniforms.uStrength.value = v.isStereo ? 0.45 : 0.62;
+    this.add.material.uniforms.uStrength.value = 0.62;
     renderer.setRenderTarget(readBuffer);
     this.add.render(renderer);
     renderer.autoClear = auto;
