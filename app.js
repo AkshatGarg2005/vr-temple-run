@@ -183,7 +183,7 @@ function startRun(mode, calibrate = false) {
   $('gameover').hidden = true;
   $('pause').hidden = true;
   document.body.classList.toggle('vr', mode !== 'flat');
-  view.isStereo = mode === 'cardboard';
+  view.setStereo(mode === 'cardboard');
   game.start(mode, { calibrate });
   hud.hidden = false;
   ui.lastStats = '';
@@ -213,7 +213,7 @@ function backToMenu() {
   $('gameover').hidden = true;
   hud.hidden = true;
   document.body.classList.remove('vr');
-  view.isStereo = false;
+  view.setStereo(false);
   game.toMenu();
   $('menu').hidden = false;
   refreshBest();

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { Pass } from 'three/addons/postprocessing/Pass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 
 class ScenePass extends Pass {
   constructor(scene, camera, view) {
@@ -73,6 +73,22 @@ const GradeShader = {
     }`,
 };
 
+// Places the two eye images side by side.
+const StereoComposeShader = {
+  uniforms: { tLeft: { value: null }, tRight: { value: null } },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tLeft, tRight;
+    varying vec2 vUv;
+    void main() {
+      gl_FragColor = vUv.x < 0.5
+        ? texture2D(tLeft, vec2(vUv.x * 2.0, vUv.y))
+        : texture2D(tRight, vec2(vUv.x * 2.0 - 1.0, vUv.y));
+    }`,
+};
+
 export class View {
   constructor(renderer, scene, camera) {
     this.renderer = renderer;
@@ -85,6 +101,14 @@ export class View {
     this.post = true;
     this.samples = 4;
     this.composer = null;
+    this.eyes = null;
+    this.compose = new FullScreenQuad(new THREE.ShaderMaterial({ ...StereoComposeShader, uniforms: THREE.UniformsUtils.clone(StereoComposeShader.uniforms), depthTest: false, depthWrite: false }));
+  }
+
+  setStereo(on) {
+    if (this.isStereo === on) return;
+    this.isStereo = on;
+    if (this.composer) this.setup(this.post, this.samples);
   }
 
   setup(post, samples) {
@@ -95,10 +119,18 @@ export class View {
       this.composer.renderTarget2.dispose();
       this.composer = null;
     }
+    if (this.eyes) { for (const e of this.eyes) e.dispose(); this.eyes = null; }
     if (!post) return;
     const r = this.renderer;
     const size = r.getDrawingBufferSize(new THREE.Vector2());
-    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples });
+    // Stereo: each eye gets its own full render target (antialiased), then the
+    // pair is copied side by side. Drawing two scissored halves into one
+    // multisampled target corrupts the second eye on many phone GPUs.
+    if (this.isStereo) {
+      const ew = Math.max(1, Math.floor(size.x / 2));
+      this.eyes = [0, 1].map(() => new THREE.WebGLRenderTarget(ew, size.y, { type: THREE.HalfFloatType, samples }));
+    }
+    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: this.isStereo ? 0 : samples });
     const composer = new EffectComposer(r, rt);
     composer.setPixelRatio(1);
     composer.setSize(size.x, size.y);
@@ -114,6 +146,7 @@ export class View {
     if (!this.composer) return;
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     this.composer.setSize(size.x, size.y);
+    if (this.eyes) for (const e of this.eyes) e.setSize(Math.max(1, Math.floor(size.x / 2)), size.y);
   }
 
   // Draw the scene (mono or stereo) into target (null = canvas).
@@ -127,19 +160,17 @@ export class View {
     camera.updateMatrixWorld();
     this.stereo.update(camera);
     if (target) {
-      const w = target.width, h = target.height;
-      target.scissorTest = true;
-      for (const [i, cam] of [[0, this.stereo.cameraL], [1, this.stereo.cameraR]]) {
-        target.viewport.set(i * w / 2, 0, w / 2, h);
-        target.scissor.set(i * w / 2, 0, w / 2, h);
-        renderer.setRenderTarget(target);
+      const eyes = this.eyes;
+      [this.stereo.cameraL, this.stereo.cameraR].forEach((cam, i) => {
+        renderer.setRenderTarget(eyes[i]);
         renderer.render(scene, cam);
         renderer.shadowMap.needsUpdate = false;
-      }
-      target.viewport.set(0, 0, w, h);
-      target.scissor.set(0, 0, w, h);
-      target.scissorTest = false;
+      });
+      const u = this.compose.material.uniforms;
+      u.tLeft.value = eyes[0].texture;
+      u.tRight.value = eyes[1].texture;
       renderer.setRenderTarget(target);
+      this.compose.render(renderer);
     } else {
       renderer.setRenderTarget(null);
       const s = renderer.getSize(new THREE.Vector2());
