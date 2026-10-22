@@ -26,6 +26,7 @@ export class Input {
     this._q0 = new THREE.Quaternion();
     this._ptr = null;
     this.enabled = true;
+    this.longPress = false;
     this.upDev = [0, 1, 0];       // world "up" in device axes, from the orientation sensor
     this.upAt = 0;
     this.hasAccel = false;
@@ -36,7 +37,7 @@ export class Input {
     window.addEventListener('pointerdown', (e) => this.onDown(e), { passive: false });
     window.addEventListener('pointermove', (e) => this.onMove(e), { passive: false });
     window.addEventListener('pointerup', (e) => this.onUp(e));
-    window.addEventListener('pointercancel', () => { this._ptr = null; });
+    window.addEventListener('pointercancel', () => { this._ptr = null; clearTimeout(this._lpTimer); });
     this._onOrient = (e) => this.onOrientation(e);
     this._onMotion = (e) => this.onMotion(e);
     this.listenSensors();
@@ -67,7 +68,14 @@ export class Input {
 
   onDown(e) {
     if (this.isUI(e)) return;
-    this._ptr = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), fired: false };
+    clearTimeout(this._lpTimer);
+    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), fired: false };
+    this._ptr = p;
+    // holding still (e.g. the headset button held down) = long press; VR only,
+    // so slow swipes on a normal screen are never swallowed
+    if (this.longPress) this._lpTimer = setTimeout(() => {
+      if (this._ptr === p && !p.fired) { p.fired = true; this.push('longpress'); }
+    }, 700);
   }
   onMove(e) {
     const p = this._ptr;
@@ -84,6 +92,7 @@ export class Input {
   onUp(e) {
     const p = this._ptr;
     this._ptr = null;
+    clearTimeout(this._lpTimer);
     if (!p || p.id !== e.pointerId || p.fired) return;
     const dt = performance.now() - p.t;
     if (dt < 350 && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 20) this.push('tap');

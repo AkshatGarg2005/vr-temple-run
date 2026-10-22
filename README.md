@@ -33,6 +33,15 @@ In Phone VR, the phone's accelerometer detects real jumps and crouches:
 - **Tuning:** if moves are missed or fire too easily, change **Body sensing** on the title screen (Low / Normal / High). Open the page with `?debug` (e.g. `https://<your-ip>:8443/?debug`) to see the live sensor readings and the current thresholds.
 - **"Motion sensor not responding":** the browser isn't sending motion data. Use the `https://` address and allow motion access when asked. On iPhone this is Safari's prompt; if you denied it earlier, clear the site's data in Settings → Safari and try again.
 
+**Recenter view** (Phone VR): if "straight ahead" drifts, recenter in any of these ways:
+
+- **Hands-free:** face the way you want to go and look down at your feet for about 2 seconds. A ring in the middle of the view fills up, then the view recenters.
+- **Headset button:** press and hold it (a long press on the screen).
+- **On-screen button:** tap the ⟲ button next to the pause button.
+- **Pause menu:** choose **Recenter view**.
+
+On a WebXR headset, click the thumbstick.
+
 After a run ends in Phone VR, jump to start again.
 
 **Hints** (title screen, on by default): before each root, gap, fallen log or fire trap, an arrow cue says **Jump** or **Slide** ("Crouch" in Phone VR). It appears dimmed as a "get ready" warning, then turns green with a short sound at the moment to act. In Phone VR the cue appears on a panel over the path, and earlier than on a normal screen, because a real jump or crouch takes longer to detect than a key press.

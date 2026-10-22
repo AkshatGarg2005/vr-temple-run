@@ -300,8 +300,9 @@ function wireUI() {
   }
 
   $('btn-pause').addEventListener('click', () => pauseGame());
+  $('btn-recenter-vr').addEventListener('click', () => game.recenter());
   $('btn-resume').addEventListener('click', () => { resumeGame(); if (game.isVR()) game.calibrate(); });
-  $('btn-recenter').addEventListener('click', () => { resumeGame(); game.calibrate(); });
+  $('btn-recenter').addEventListener('click', () => { resumeGame(); game.recenter(); });
   $('btn-quit').addEventListener('click', () => backToMenu());
   $('btn-again').addEventListener('click', () => startRun(game.mode));
   $('btn-menu').addEventListener('click', () => backToMenu());

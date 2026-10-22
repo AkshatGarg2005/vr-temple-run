@@ -77,6 +77,8 @@ export class Game {
     this.dust = new Particles(scene, this.M.glow, 260, false);
     this.motes = createMotes(scene, this.M.glow, mobile ? 260 : 420);
     this.vrHud = new VRHud(this.rig);
+    this.vrHud.attachHeadLocked(this.camera);
+    this.lookDownT = 0;
 
     this.camPos = new THREE.Vector3(6, 3, -8);
     this.camLook = new THREE.Vector3();
@@ -168,16 +170,27 @@ export class Game {
 
   // Treat the current head direction as "straight ahead".
   calibrate() {
-    if (this.mode === 'cardboard') {
-      _e.setFromQuaternion(this.input.deviceQuat, 'YXZ');
-      this.calibYaw = _e.y;
-    } else if (this.mode === 'xr') {
-      _e.setFromQuaternion(this.camera.quaternion, 'YXZ');
-      this.calibYaw = _e.y;
-    }
-    this.calibQ.setFromAxisAngle(UP, this.calibYaw);
+    this.recenter(true);
     this.input.body.reset();
     if (this.mode === 'xr') this.xrBody.base = this.camera.position.y;
+  }
+
+  // Make the direction the player is facing "straight ahead" (VR only).
+  recenter(silent = false) {
+    if (this.mode === 'cardboard') {
+      _e.setFromQuaternion(this.input.deviceQuat, 'YXZ');
+    } else if (this.mode === 'xr') {
+      _e.setFromQuaternion(this.camera.quaternion, 'YXZ');
+    } else {
+      return;
+    }
+    this.calibYaw = _e.y;
+    this.calibQ.setFromAxisAngle(UP, this.calibYaw);
+    if (!silent) {
+      this.ui.toast('View recentered');
+      this.sound.recenter();
+      buzz(30);
+    }
   }
 
   // ------------------------------------------------------------------ input
@@ -192,6 +205,7 @@ export class Game {
         else if (a === 'bodyCrouch' && this.isVR()) { this.slide(); this.bodyFlash = { text: '▼ SLIDE', t: 0.7 }; }
       }
       if (this.state === 'calibrate' && a === 'tap') this.calSkip = true;
+      if ((a === 'recenter' || a === 'longpress') && this.isVR()) this.recenter();
       if (this.state === 'countdown' && (a === 'bodyJump' || a === 'bodyCrouch')) {
         this.bodyNote = { text: a === 'bodyJump' ? 'Jump detected' : 'Crouch detected', t: 1.2 };
       }
@@ -267,6 +281,7 @@ export class Game {
     _e.setFromQuaternion(q, 'YXZ');
     const H = this.head;
     H.pitch = _e.x; H.yaw = wrapAngle(_e.y); H.roll = _e.z;
+    this.lookDownRecenter(dt);
     if (this.state !== 'run') return;
     if (Math.abs(H.yaw) < 0.6 && Math.abs(H.pitch) < 0.75) {
       const r = -H.roll; // + = tilted right
@@ -281,6 +296,25 @@ export class Game {
       this.calibYaw += wrapAngle(H.yaw) * Math.min(1, dt * 0.12);
       this.calibQ.setFromAxisAngle(UP, this.calibYaw);
     }
+  }
+
+  // Hands-free recenter: face the way you want to go and look down at your
+  // feet (~65 deg or more) for 1.6 s. A ring in the middle of the view fills
+  // up; looking back up cancels. Lane steering is ignored while looking down.
+  lookDownRecenter(dt) {
+    const active = this.state === 'run' || this.state === 'countdown' || this.state === 'over' || this.state === 'calibrate';
+    const H = this.head;
+    if (!active) { this.lookDownT = 0; this.vrHud.recenterProgress(0); return; }
+    if (H.pitch < -1.13) {
+      if (this.lookDownT >= 0) {
+        this.lookDownT += dt;
+        if (this.lookDownT >= 1.6) { this.recenter(); this.lookDownT = -1; }
+      }
+    } else if (H.pitch > -0.95) {
+      this.lookDownT = 0; // re-arm once the player looks back up
+    }
+    const p = this.lookDownT > 0.25 ? this.lookDownT / 1.6 : 0;
+    this.vrHud.recenterProgress(p);
   }
 
   // WebXR headsets with positional tracking (e.g. Quest): read real jumps and
@@ -318,6 +352,7 @@ export class Game {
       edge('d', ay > 0.7, 'slide');
       edge('trig', !!(gp.buttons[0] && gp.buttons[0].pressed), this.state === 'over' ? 'confirm' : 'jump');
       edge('grip', !!(gp.buttons[1] && gp.buttons[1].pressed), 'slide');
+      edge('stick', !!(gp.buttons[3] && gp.buttons[3].pressed), 'recenter');
     }
   }
 
@@ -381,6 +416,7 @@ export class Game {
     if (this.mode === 'cardboard') {
       this.camera.quaternion.copy(this.calibQ).invert().multiply(this.input.deviceQuat);
     }
+    this.input.longPress = this.isVR();
     this.input.body.enabled = this.isVR() && (this.state === 'run' || this.state === 'countdown' || this.state === 'over');
     this.xrControllers();
     this.xrBodyTrack(dt);

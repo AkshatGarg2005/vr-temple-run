@@ -96,6 +96,12 @@ export class Sound {
     this.tone(a, t, 0.09, { type: 'triangle', gain: 0.2 });
     this.tone(b, t + 0.08, 0.14, { type: 'triangle', gain: 0.2 });
   }
+  recenter() {
+    if (!this.ok()) return;
+    const t = this.now();
+    this.tone(784, t, 0.12, { type: 'sine', gain: 0.14 });
+    this.tone(1175, t + 0.1, 0.22, { type: 'sine', gain: 0.12 });
+  }
   power() {
     if (!this.ok()) return;
     const t = this.now();

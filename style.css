@@ -479,3 +479,9 @@ body.vr .toast { display: none; }
   box-shadow: 0 0 28px rgba(124, 240, 190, 0.45);
 }
 body.vr .hint { display: none; }
+
+/* Recenter button: only in phone VR, beside the pause button on the eye divider */
+.icon-btn-recenter { display: none; }
+body.vr .icon-btn-recenter { display: grid; }
+body.vr #btn-pause { transform: translateX(calc(-100% - 6px)); }
+body.vr .icon-btn-recenter { transform: translateX(6px); }
