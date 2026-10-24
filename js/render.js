@@ -216,6 +216,7 @@ export class View {
     this.sunR = new THREE.Vector4();
     this.eyeAspect = 1.7;
     this.raysEnabled = true;
+    this.bloomEnabled = true;
     this.compose = new FullScreenQuad(new THREE.ShaderMaterial({ ...StereoComposeShader, uniforms: THREE.UniformsUtils.clone(StereoComposeShader.uniforms), depthTest: false, depthWrite: false }));
   }
 
@@ -254,6 +255,7 @@ export class View {
     this.rays.enabled = this.raysEnabled;
     composer.addPass(this.rays);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.66, 0.6, 0.9);
+    this.bloom.enabled = this.bloomEnabled;
     composer.addPass(this.bloom);
     this.grade = new ShaderPass(GradeShader);
     this.grade.uniforms.uSunL.value = this.sunL;
@@ -325,6 +327,11 @@ export class View {
   setRays(on) {
     this.raysEnabled = on;
     if (this.rays) this.rays.enabled = on;
+  }
+
+  setBloom(on) {
+    this.bloomEnabled = on;
+    if (this.bloom) this.bloom.enabled = on;
   }
 
   render(time, flash, speed = 0) {

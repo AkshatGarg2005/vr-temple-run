@@ -13,15 +13,24 @@ const UP = new THREE.Vector3(0, 1, 0);
 const rand = Math.random;
 const pick = (arr) => arr[Math.floor(rand() * arr.length)];
 
+// Fixed-size pool of instances. Only slots up to the highest one in use are
+// drawn (mesh.count), and new items fill the lowest free slot, so a pool of
+// 600 coins with 50 in play costs the GPU 50 coins, not 600.
 class InstPool {
   constructor(mesh) {
     this.mesh = mesh;
-    this.free = [];
-    for (let i = mesh.count - 1; i >= 0; i--) { this.free.push(i); mesh.setMatrixAt(i, ZERO); }
+    this.size = mesh.count;
+    this.used = new Uint8Array(this.size);
+    this.free = [];                 // descending, so pop() gives the lowest slot
+    for (let i = this.size - 1; i >= 0; i--) { this.free.push(i); mesh.setMatrixAt(i, ZERO); }
+    this.top = 0;                   // every slot at or above this is unused
+    mesh.count = 0;
   }
   alloc(matrix) {
     const i = this.free.pop();
     if (i === undefined) return -1;
+    this.used[i] = 1;
+    if (i >= this.top) { this.top = i + 1; this.mesh.count = this.top; }
     this.mesh.setMatrixAt(i, matrix);
     this.mesh.instanceMatrix.needsUpdate = true;
     return i;
@@ -29,7 +38,12 @@ class InstPool {
   release(i) {
     if (i < 0) return;
     this.mesh.setMatrixAt(i, ZERO);
-    this.free.push(i);
+    this.used[i] = 0;
+    let lo = 0, hi = this.free.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (this.free[mid] > i) lo = mid + 1; else hi = mid; }
+    this.free.splice(lo, 0, i);
+    while (this.top > 0 && !this.used[this.top - 1]) this.top--;
+    this.mesh.count = this.top;
     this.mesh.instanceMatrix.needsUpdate = true;
   }
 }
@@ -92,8 +106,8 @@ export class World {
     // per-instance tint so slabs don't look stamped
     const tint = new THREE.Color();
     for (const key of ['top', 'struct']) {
-      const mesh = this.P[key].mesh;
-      for (let i = 0; i < mesh.count; i++) {
+      const { mesh, size } = this.P[key];
+      for (let i = 0; i < size; i++) {
         const v = 0.86 + rand() * 0.22;
         tint.setRGB(v, v * (0.97 + rand() * 0.05), v * (0.94 + rand() * 0.06));
         mesh.setColorAt(i, tint);

@@ -135,9 +135,13 @@ let view = null;
 
 function applyQuality() {
   quality.ceiling = quality.maxDpr();
-  quality.dpr = Math.min(window.devicePixelRatio || 1, quality.ceiling);
+  // phone VR starts a little lower and climbs back if the phone keeps up
+  const start = game.mode === 'cardboard' ? 1.5 : quality.ceiling;
+  quality.dpr = Math.min(window.devicePixelRatio || 1, start);
   quality.samples = msaaSamples();
   perf.t = 0; perf.dts.length = 0; perf.cooldown = 3; perf.calm = 0;
+  view.setRays(true);
+  view.setBloom(true);
   renderer.setPixelRatio(quality.dpr);
   renderer.setSize(innerWidth, innerHeight);
   view.setup(true, quality.samples);
@@ -332,7 +336,8 @@ let clock = 0;
 // Aim for every frame on time, at the display's refresh rate or 60 fps,
 // whichever is slower. As soon as frames are being missed (or the game runs
 // under ~50 fps), step down: anti-aliasing first, then resolution (sized to
-// how far behind it is), then sun shafts. Step back up only after a long
+// how far behind it is), then sun shafts. In phone VR the lenses magnify the
+// screen, so resolution only goes below 1.25 after bloom has been turned off. Step back up only after a long
 // smooth stretch and never near a resolution that already proved too slow,
 // so quality doesn't bounce (each change briefly freezes the game while its
 // buffers are rebuilt).
@@ -345,15 +350,18 @@ function setDpr(v) {
 }
 
 function stepDown(load) {
+  const floor = game.mode === 'cardboard' && view.bloomEnabled ? 1.25 : quality.minDpr;
   if (quality.samples > 0) {
     quality.samples = 0;
     view.setup(true, 0);
-  } else if (quality.dpr > quality.minDpr + 0.01) {
+  } else if (quality.dpr > floor + 0.01) {
     // GPU time grows with the pixel count (pixel ratio squared)
     const fit = quality.dpr * Math.sqrt(1 / load) * 0.92;
     quality.ceiling = quality.dpr - 0.1;
-    setDpr(Math.max(quality.minDpr, clamp(fit, quality.dpr - 0.5, quality.dpr - 0.1)));
-  } else if (view.raysEnabled) {
+    setDpr(Math.max(floor, clamp(fit, quality.dpr - 0.5, quality.dpr - 0.1)));
+  } else if (game.mode === 'cardboard' && view.bloomEnabled) {
+    view.setBloom(false);
+  } else if (view.raysEnabled && game.mode === 'flat') {
     view.setRays(false);
   }
 }
@@ -396,7 +404,11 @@ function frame(ts) {
   game.update(dt, clock);
   view.render(clock, game.flash, game.speedFx());
 
-  if (!renderer.xr.isPresenting && (game.state === 'run' || game.state === 'menu') && interval > 0 && interval < 0.5) {
+  // also adapt during calibration and the countdown, so any brief freezes
+  // from changing quality happen before the run starts
+  const s = game.state;
+  const measure = s === 'run' || s === 'menu' || s === 'countdown' || s === 'calibrate';
+  if (!renderer.xr.isPresenting && measure && interval > 0 && interval < 0.5) {
     adaptQuality(interval);
   }
 }
