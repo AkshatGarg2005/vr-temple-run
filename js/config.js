@@ -23,8 +23,8 @@ export const MAX_SPEED = 29;
 // VR (headset, first person) runs slower: fast forward motion feels much
 // faster with your head in the scene. Jumps there reach the same height but
 // hang longer, so they still carry you over gaps at the lower speed.
-export const VR_START_SPEED = 3;
-export const VR_MAX_SPEED = 5;
+export const VR_START_SPEED = 6;
+export const VR_MAX_SPEED = 8;
 export const VR_GRAVITY = 28;
 export const VR_JUMP_V = 10.5;
 export const RUNNER_H = 1.8;
