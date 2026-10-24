@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import {
   PATH_W, HALF_W, LANES, X_LIMIT, GRAVITY, JUMP_V, SLIDE_TIME, START_SPEED, MAX_SPEED, RUNNER_H, SLIDE_H,
+  VR_START_SPEED, VR_MAX_SPEED, VR_GRAVITY, VR_JUMP_V,
   SUN_DIR, PALETTE, clamp, damp, wrapAngle,
 } from './config.js';
 import { patchFog, createSky, createMountains, createCloudSea, createCanopy, buildEnvironment, createBirds } from './atmosphere.js';
@@ -122,7 +123,7 @@ export class Game {
     this.P = {
       seg, s: 3.2, x: 0, targetX: 0, lane: 1, y: 0, vy: 0, airborne: false,
       sliding: false, slideT: 0, slideQueued: false,
-      speed: START_SPEED, slow: 0, time: 0, odo: 0, stumbleAge: 99,
+      speed: this.speedRange()[0], slow: 0, time: 0, odo: 0, stumbleAge: 99,
       coins: 0, score: 0, mult: 1, magnetT: 0, turnReq: null, streak: 0, streakT: 0,
       yaw: seg.yaw, lean: 0, pos: new THREE.Vector3(), offset: new THREE.Vector3(), ahead: new THREE.Vector3(),
       deadType: null, deadT: 0, knock: 0, dustT: 0,
@@ -180,6 +181,7 @@ export class Game {
   firstPerson() { return !!this.settings.firstPerson; }
   useTilt() { return this.mode === 'flat' && this.settings.tilt && this.input.motionLive(); }
   isVR() { return this.mode !== 'flat'; }
+  speedRange() { return this.isVR() ? [VR_START_SPEED, VR_MAX_SPEED] : [START_SPEED, MAX_SPEED]; }
 
   // Treat the current head direction as "straight ahead".
   calibrate() {
@@ -272,7 +274,7 @@ export class Game {
     const P = this.P;
     if (P.airborne) return;
     P.sliding = false; P.slideT = 0;
-    P.vy = JUMP_V; P.airborne = true;
+    P.vy = this.isVR() ? VR_JUMP_V : JUMP_V; P.airborne = true;
     this.sound.jump();
   }
 
@@ -581,7 +583,8 @@ export class Game {
     P.stumbleAge += dt;
     P.magnetT = Math.max(0, P.magnetT - dt);
 
-    const base = START_SPEED + (MAX_SPEED - START_SPEED) * (1 - Math.exp(-P.time / 110));
+    const [v0, v1] = this.speedRange();
+    const base = v0 + (v1 - v0) * (1 - Math.exp(-P.time / 110));
     P.slow = Math.max(0, P.slow - dt * 0.7);
     P.speed = base * (1 - P.slow * 0.3);
 
@@ -602,7 +605,7 @@ export class Game {
     // vertical
     const seg = P.seg;
     if (P.airborne) {
-      P.vy -= GRAVITY * dt;
+      P.vy -= (this.isVR() ? VR_GRAVITY : GRAVITY) * dt;
       P.y += P.vy * dt;
       if (P.y <= 0) {
         if (this.world.overGap(seg, P.s)) { P.y = Math.min(P.y, 0); this.die('fall'); return; }
@@ -682,7 +685,7 @@ export class Game {
     const chaseTarget = close ? 1.25 * vrNear : P.time < 3.2 ? 1.5 * vrNear : 16;
     this.chasers.dist = damp(this.chasers.dist, chaseTarget, close && P.stumbleAge < 1 ? 5 : 0.7, dt);
     this.chasers.update(dt, this.crumbs, P.odo, P.speed, t);
-    this.sound.setPace((P.speed - START_SPEED) / (MAX_SPEED - START_SPEED), close ? 1 : 0);
+    this.sound.setPace((P.speed - v0) / (v1 - v0), close ? 1 : 0);
 
     this.world.update(dt, t, P);
     this.updateHints();
