@@ -3,14 +3,18 @@
 export class Sound {
   constructor() {
     this.ctx = null;
+    this.started = false;   // the player has tapped, so sound may play
     this.enabled = true;
     this.musicOn = false;
     this.tempo = 112;
     this.intensity = 0;
   }
 
-  init() {
-    if (this.ctx) { this.ctx.resume?.(); return; }
+  // Opening the audio device takes ~0.2 s the first time, which froze the
+  // start of the first run. It's done during loading instead; the context
+  // stays suspended and silent until init() runs on the player's tap.
+  prepare() {
+    if (this.ctx) return;
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     const ctx = new AC();
@@ -39,6 +43,13 @@ export class Sound {
     const nd = nb.getChannelData(0);
     for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
     this.noiseBuf = nb;
+  }
+
+  init() {
+    this.prepare();
+    if (!this.ctx) return;
+    this.started = true;
+    this.ctx.resume?.();
   }
 
   setEnabled(on) {
@@ -75,7 +86,7 @@ export class Sound {
     s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.05);
   }
 
-  ok() { return this.ctx && this.enabled; }
+  ok() { return this.ctx && this.started && this.enabled; }
 
   coin(streak = 0) {
     if (!this.ok()) return;
@@ -138,7 +149,7 @@ export class Sound {
 
   // ---- music ----
   startMusic() {
-    if (!this.ctx || this.musicOn) return;
+    if (!this.ctx || !this.started || this.musicOn) return;
     this.musicOn = true;
     const c = this.ctx;
     this.step = 0;

@@ -36,11 +36,17 @@ renderer.shadowMap.autoUpdate = false;
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local');
 
+// Multisampled anti-aliasing costs more than the rest of the frame put
+// together at Retina / phone pixel density, where the pixels are already too
+// small to show jagged edges. Only lower-density screens use it.
+const msaaSamples = () => ((window.devicePixelRatio || 1) >= 1.5 ? 0 : 4);
 const quality = {
-  // Always the top graphics tier; resolution scales down on its own if the frame rate drops.
+  // Starts at the top graphics tier and steps down on its own if frames are missed.
   maxDpr: () => 2 * (game && game.mode === 'cardboard' ? 0.85 : 1),
   minDpr: 0.6,
   dpr: 1,
+  samples: msaaSamples(),
+  ceiling: 2,       // highest pixel ratio allowed; lowered when one proves too slow
 };
 quality.dpr = Math.min(window.devicePixelRatio || 1, 2);
 renderer.setPixelRatio(quality.dpr);
@@ -128,10 +134,13 @@ let game = null;
 let view = null;
 
 function applyQuality() {
-  quality.dpr = Math.min(window.devicePixelRatio || 1, quality.maxDpr());
+  quality.ceiling = quality.maxDpr();
+  quality.dpr = Math.min(window.devicePixelRatio || 1, quality.ceiling);
+  quality.samples = msaaSamples();
+  perf.t = 0; perf.dts.length = 0; perf.cooldown = 3; perf.calm = 0;
   renderer.setPixelRatio(quality.dpr);
   renderer.setSize(innerWidth, innerHeight);
-  view.setup(true, 4);
+  view.setup(true, quality.samples);
   onResize();
 }
 
@@ -316,37 +325,79 @@ function wireUI() {
 }
 
 // ---------------------------------------------------------------------------
-// Main loop with dynamic resolution
+// Main loop with automatic quality
 let lastTs = performance.now();
 let clock = 0;
-let perf = { t: 0, frames: 0, cooldown: 3 };
+
+// Aim for every frame on time, at the display's refresh rate or 60 fps,
+// whichever is slower. As soon as frames are being missed (or the game runs
+// under ~50 fps), step down: anti-aliasing first, then resolution (sized to
+// how far behind it is), then sun shafts. Step back up only after a long
+// smooth stretch and never near a resolution that already proved too slow,
+// so quality doesn't bounce (each change briefly freezes the game while its
+// buffers are rebuilt).
+const perf = { t: 0, dts: [], cooldown: 3, calm: 0 };
+
+function setDpr(v) {
+  quality.dpr = v;
+  renderer.setPixelRatio(v);
+  onResize();
+}
+
+function stepDown(load) {
+  if (quality.samples > 0) {
+    quality.samples = 0;
+    view.setup(true, 0);
+  } else if (quality.dpr > quality.minDpr + 0.01) {
+    // GPU time grows with the pixel count (pixel ratio squared)
+    const fit = quality.dpr * Math.sqrt(1 / load) * 0.92;
+    quality.ceiling = quality.dpr - 0.1;
+    setDpr(Math.max(quality.minDpr, clamp(fit, quality.dpr - 0.5, quality.dpr - 0.1)));
+  } else if (view.raysEnabled) {
+    view.setRays(false);
+  }
+}
+
+function stepUp() {
+  const top = Math.min(window.devicePixelRatio || 1, quality.maxDpr(), quality.ceiling);
+  if (quality.dpr <= top - 0.1) setDpr(Math.min(top, quality.dpr + 0.15));
+}
+
+function adaptQuality(interval) {
+  perf.t += interval;
+  perf.cooldown -= interval;
+  perf.dts.push(interval);
+  if (perf.t < 2) return;
+  const dts = perf.dts.sort((a, b) => a - b);
+  perf.t = 0;
+  perf.dts = [];
+  if (perf.cooldown > 0 || dts.length < 20) return;
+  const fast = dts[Math.floor(dts.length * 0.1)];        // frame interval when keeping up
+  const budget = Math.max(fast, 1 / 60);
+  const missed = dts.filter((d) => d > budget * 1.5).length / dts.length;
+  const mean = dts.reduce((a, b) => a + b, 0) / dts.length;
+  if (missed > 0.08 || fast > 1 / 50) {
+    stepDown(Math.max(1.05, mean / budget));
+    perf.cooldown = 3;
+    perf.calm = 0;
+  } else if (missed < 0.01 && (perf.calm += 2) >= 30) {
+    stepUp();
+    perf.cooldown = 3;
+    perf.calm = 0;
+  }
+}
 
 function frame(ts) {
   const now = ts || performance.now();
-  const dt = clamp((now - lastTs) / 1000, 0, 0.05);
+  const interval = (now - lastTs) / 1000;
+  const dt = clamp(interval, 0, 0.05);
   lastTs = now;
   clock += dt;
   game.update(dt, clock);
   view.render(clock, game.flash, game.speedFx());
 
-  if (!renderer.xr.isPresenting && (game.state === 'run' || game.state === 'menu')) {
-    perf.t += dt; perf.frames++; perf.cooldown -= dt;
-    if (perf.t >= 2) {
-      const fps = perf.frames / perf.t;
-      perf.t = 0; perf.frames = 0;
-      if (perf.cooldown <= 0) {
-        let next = quality.dpr;
-        if (fps < 38 && quality.dpr <= quality.minDpr + 0.01 && view.raysEnabled) view.setRays(false);
-        if (fps < 46 && quality.dpr > quality.minDpr) next = Math.max(quality.minDpr, quality.dpr - 0.15);
-        else if (fps > 58 && quality.dpr < Math.min(window.devicePixelRatio || 1, quality.maxDpr())) next = Math.min(quality.maxDpr(), quality.dpr + 0.1);
-        if (Math.abs(next - quality.dpr) > 0.01) {
-          quality.dpr = next;
-          renderer.setPixelRatio(next);
-          onResize();
-          perf.cooldown = 4;
-        }
-      }
-    }
+  if (!renderer.xr.isPresenting && (game.state === 'run' || game.state === 'menu') && interval > 0 && interval < 0.5) {
+    adaptQuality(interval);
   }
 }
 
@@ -354,9 +405,10 @@ async function boot() {
   try {
     await Promise.race([document.fonts?.ready, new Promise((r) => setTimeout(r, 1500))]);
   } catch { /* fonts optional */ }
+  try { sound.prepare(); } catch { /* audio unavailable: init() retries on the first tap */ }
   game = new Game({ renderer, input, sound, ui, settings, mobile: IS_MOBILE });
   view = new View(renderer, game.scene, game.camera);
-  view.setup(true, 4);
+  view.setup(true, quality.samples);
   wireUI();
   onResize();
   // warm up shaders before revealing the scene
